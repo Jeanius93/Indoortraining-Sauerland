@@ -72,6 +72,7 @@ for (let pass = 0; pass < 2; pass++) {
     DF[j * dw + i] = v;
   }
 }
+const inBox = (x, y, m = 5) => x > x0 + m && y > y0 + m && x < x0 + (nx - 1) * cell - m && y < y0 + (ny - 1) * cell - m;
 const routeDist = (x, y) => { const i = Math.round((x - x0) / DC), j = Math.round((y - y0) / DC); return i < 0 || j < 0 || i >= dw || j >= dh ? 1e9 : DF[j * dw + i]; };
 
 // ---------- Rasterpunkte des Geländes in UTM ----------
@@ -147,7 +148,7 @@ function parseLod2(file, E0, N0, affine) {
     if (!surfaces.length) continue;
     if (!cn) { for (const s of surfaces) for (const p of s.ring) { groundMin = Math.min(groundMin, p[2]); cxs += p[0]; cys += p[1]; cn++; } }
     const [lx, ly] = affine(cxs / cn, cys / cn);
-    if (routeDist(lx, ly) > 2500) continue;
+    if (routeDist(lx, ly) > 2500 || !inBox(lx, ly, 60)) continue;
     buildings.count++;
     const vStart = buildings.pos.length / 3;
     for (const s of surfaces) {
@@ -206,7 +207,7 @@ function processNdom(t, mask, E0, N0, affine) {
     for (let b = -2; b <= 2 && isMax; b++) for (let a = -2; a <= 2; a++) { const v = H[(j + b) * S + i + a]; if (v > h || (v === h && (b < 0 || (b === 0 && a < 0)))) { isMax = false; break; } }
     if (!isMax) continue;
     const E = E0 + i + 0.5, N = N0 + 1000 - j - 0.5, [lx, ly] = affine(E, N), d = routeDist(lx, ly);
-    if (d < 4.5 || d > 1600) continue;
+    if (d < 4.5 || d > 1600 || !inBox(lx, ly)) continue;
     const Rm = d < 150 ? 3.5 : d < 500 ? 7 : 13, r = Math.ceil(Rm);
     let keep = true;
     for (let b = -r; b <= r && keep; b++) for (let a = -r; a <= r; a++) {
@@ -272,9 +273,9 @@ for (const [e, n] of keys) {
   const lod2 = await download('lod2', key);
   const fps = lod2 ? parseLod2(lod2, E0, N0, affine) : [];
   const dgm = await download('dgm1', key);
-  if (dgm) { processDgm(await readTiff(dgm)); fs.rmSync(dgm); }
+  if (dgm) processDgm(await readTiff(dgm));
   const nd = await download('ndom', key);
-  if (nd) { processNdom(await readTiff(nd), rasterizeMask(fps, E0, N0, 1000), E0, N0, affine); fs.rmSync(nd); }
+  if (nd) processNdom(await readTiff(nd), rasterizeMask(fps, E0, N0, 1000), E0, N0, affine);
   done++;
   process.stdout.write(`\r${done}/${keys.length} Kacheln · ${buildings.count} Gebäude · ${trees.length} Bäume   `);
 }
@@ -323,7 +324,7 @@ for (const [from, to] of buildings.ranges) {
   for (let v = from; v < to; v++) if (P[v * 3 + 2] <= minZ + 0.5) minTerrain = Math.min(minTerrain, meshH(P[v * 3], P[v * 3 + 1]));
   const off = (minTerrain - 3) - minZ;
   for (let v = from; v < to; v++) {
-    outPos[v * 3] = Math.round((P[v * 3] - x0) / QX); outPos[v * 3 + 1] = Math.round((P[v * 3 + 1] - y0) / QX);
+    outPos[v * 3] = Math.max(0, Math.round((P[v * 3] - x0) / QX)); outPos[v * 3 + 1] = Math.max(0, Math.round((P[v * 3 + 1] - y0) / QX));
     outPos[v * 3 + 2] = Math.round((P[v * 3 + 2] + off) / QZ);
   }
 }
