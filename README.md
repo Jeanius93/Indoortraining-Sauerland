@@ -36,8 +36,21 @@ npm run build        # Produktions-Build nach dist/
 3. Strecken-Paket bauen (Höhenraster + geglättete Straße):
    `node scripts/prepare-route.mjs routes/meinestrecke.gpx public/routes/meinestrecke`
 
-Die Straßenhöhe kommt aus der Aufzeichnung (Barometer, geglättet), das Gelände aus den
-Mapzen Terrain Tiles (AWS Open Data; SRTM, EU-DEM u. a.).
+4. Echte Welt aus amtlichen Geodaten NRW (Häuser, Bäume, genaues Gelände):
+   `NODE_USE_ENV_PROXY=1 node scripts/prepare-world.mjs public/routes/meinestrecke`
+
+### Datenquellen
+
+| Daten | Quelle | Verwendung |
+|---|---|---|
+| DGM1 – Geländemodell 1 m | Geobasis NRW | Gelände und Straßenhöhe |
+| 3D-Gebäudemodell LoD2 | Geobasis NRW | Häuser mit echten Dachformen, Farbe nach Gebäudeart |
+| nDOM 50 cm – Höhe über Grund | Geobasis NRW | einzelne Bäume (Position, Höhe, Krone, Laub/Nadel) und Waldflächen |
+| Terrain Tiles | Mapzen / AWS Open Data | Gelände außerhalb von NRW (Rückfall) |
+
+Geobasis-NRW-Daten stehen unter der Datenlizenz Deutschland – Zero – Version 2.0.
+Bäume werden als lokale Höhenmaxima im nDOM erkannt: nahe der Straße jeder einzelne Baum,
+weiter weg zu Gruppen zusammengefasst. Spitze Kronen gelten als Nadelbäume.
 
 ## Veröffentlichen (GitHub Pages)
 
@@ -47,5 +60,5 @@ Web Bluetooth braucht HTTPS – GitHub Pages liefert das mit.
 ## Geplant
 
 - Direkter Strava-Upload (OAuth)
-- Hochauflösendes NRW-Geländemodell (DGM1), Luftbilder (DOP20) und 3D-Gebäude (LoD2)
+- Luftbilder (DOP20) als Bodentextur, Gewässer, Nebenstraßen
 - Ghost-Rider (eigene Bestzeit), Segmente, Streckenauswahl, `.zwo`-Workout-Import

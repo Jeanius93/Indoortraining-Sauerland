@@ -12,6 +12,18 @@ export interface RouteData {
   h: number[];
   terrain: { x0: number; y0: number; cell: number; nx: number; ny: number; scale: number };
   attribution: string;
+  world?: {
+    buildings: { vertices: number; triangles: number; count: number; qxy: number; qz: number; palette: string[] };
+    trees: { count: number; qxy: number };
+    canopy: boolean;
+  };
+}
+
+/** Echte Weltdaten (Geobasis NRW), falls für die Strecke vorhanden */
+export interface WorldData {
+  buildings?: { pos: Uint16Array; col: Uint8Array };
+  trees?: Uint8Array;
+  canopy?: Uint8Array;
 }
 
 export interface RoutePose {
@@ -60,13 +72,31 @@ export class Route {
   }
 }
 
-export async function loadRoute(base: string) {
-  const [data, terrain] = await Promise.all([
-    fetch(`${base}/route.json`).then(r => { if (!r.ok) throw new Error(`route.json: ${r.status}`); return r.json() as Promise<RouteData>; }),
-    // In der Artefakt-Vorschau liegt das Höhenraster als Base64-JSON vor (nur Standard-Dateitypen erlaubt)
-    import.meta.env.MODE === 'artifact'
-      ? fetch(`${base}/terrain.json`).then(r => r.json() as Promise<{ b64: string }>).then(j => Uint8Array.from(atob(j.b64), c => c.charCodeAt(0)).buffer)
-      : fetch(`${base}/terrain.bin`).then(r => { if (!r.ok) throw new Error(`terrain.bin: ${r.status}`); return r.arrayBuffer(); }),
-  ]);
-  return { route: new Route(data), heights: new Int16Array(terrain) };
+// In der Artefakt-Vorschau liegen Binärdaten als Base64-JSON vor (dort sind nur Standard-Dateitypen erlaubt)
+async function fetchBin(base: string, name: string): Promise<ArrayBuffer> {
+  if (import.meta.env.MODE === 'artifact') {
+    const r = await fetch(`${base}/${name}.json`); if (!r.ok) throw new Error(`${name}: ${r.status}`);
+    const { b64 } = await r.json() as { b64: string };
+    const bin = atob(b64), out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out.buffer;
+  }
+  const r = await fetch(`${base}/${name}.bin`); if (!r.ok) throw new Error(`${name}.bin: ${r.status}`);
+  return r.arrayBuffer();
+}
+
+export async function loadRoute(base: string, onProgress?: (msg: string) => void) {
+  const data = await fetch(`${base}/route.json`).then(r => { if (!r.ok) throw new Error(`route.json: ${r.status}`); return r.json() as Promise<RouteData>; });
+  onProgress?.('Gelände wird geladen …');
+  const heights = new Int16Array(await fetchBin(base, 'terrain'));
+  const world: WorldData = {};
+  if (data.world) {
+    onProgress?.(`${data.world.buildings.count.toLocaleString('de-DE')} Häuser und ${data.world.trees.count.toLocaleString('de-DE')} Bäume werden geladen …`);
+    const [b, t, c] = await Promise.all([fetchBin(base, 'buildings'), fetchBin(base, 'trees'), fetchBin(base, 'canopy')]);
+    const nV = data.world.buildings.vertices;
+    world.buildings = { pos: new Uint16Array(b, 0, nV * 3), col: new Uint8Array(b, nV * 6, nV / 3) };
+    world.trees = new Uint8Array(t);
+    world.canopy = new Uint8Array(c);
+  }
+  return { route: new Route(data), heights, world };
 }

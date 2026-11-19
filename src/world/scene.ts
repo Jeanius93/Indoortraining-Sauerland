@@ -1,8 +1,8 @@
 // 3D-Welt: Renderer, Himmel, Licht, Kameras
 import * as THREE from 'three';
-import type { Route } from '../route';
+import type { Route, WorldData } from '../route';
 import { Avatar, type AvatarStyle } from './avatar';
-import { Heightfield, buildRoad, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
+import { Heightfield, buildBuildings, buildRealTrees, buildRoad, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
 
 export const cameraModes = ['Verfolger', 'Seite', 'Ego', 'Drohne'] as const;
 export type CameraMode = typeof cameraModes[number];
@@ -19,8 +19,9 @@ export class World {
   private camLook = new THREE.Vector3();
   private first = true;
   treeCount = 0;
+  buildingCount = 0;
 
-  constructor(canvas: HTMLCanvasElement, private route: Route, heights: Int16Array, style: AvatarStyle, quality: 'low' | 'high') {
+  constructor(canvas: HTMLCanvasElement, private route: Route, heights: Int16Array, data: WorldData, style: AvatarStyle, quality: 'low' | 'high') {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: quality === 'high', powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality === 'high' ? 2 : 1.5));
     this.renderer.shadowMap.enabled = true;
@@ -41,9 +42,11 @@ export class World {
 
     this.hf = new Heightfield(heights, route.data.terrain);
     const dist = makeRouteDistance(route, route.data.terrain);
-    this.scene.add(buildTerrain(this.hf, dist));
+    this.scene.add(buildTerrain(this.hf, dist, data.canopy));
     this.scene.add(buildRoad(route));
-    const trees = buildTrees(this.hf, dist, route, quality);
+    const w = route.data.world;
+    if (data.buildings && w) { this.scene.add(buildBuildings(this.hf, data.buildings, w.buildings)); this.buildingCount = w.buildings.count; }
+    const trees = data.trees ? buildRealTrees(this.hf, data.trees, dist, quality) : buildTrees(this.hf, dist, route, quality);
     this.treeCount = trees.count;
     this.scene.add(trees.group);
 

@@ -12,6 +12,7 @@ fs.writeFileSync(`${dir}/sauerland-indoor.html`, `${title}\n${head.replace(title
 for (const r of fs.readdirSync('public/routes')) {
   fs.mkdirSync(`${dir}/routes/${r}`, { recursive: true });
   fs.copyFileSync(`public/routes/${r}/route.json`, `${dir}/routes/${r}/route.json`);
-  fs.writeFileSync(`${dir}/routes/${r}/terrain.json`, JSON.stringify({ b64: fs.readFileSync(`public/routes/${r}/terrain.bin`).toString('base64') }));
+  for (const f of fs.readdirSync(`public/routes/${r}`).filter(f => f.endsWith('.bin')))
+    fs.writeFileSync(`${dir}/routes/${r}/${f.replace('.bin', '.json')}`, JSON.stringify({ b64: fs.readFileSync(`public/routes/${r}/${f}`).toString('base64') }));
 }
 console.log('Artefakt:', fs.statSync(`${dir}/sauerland-indoor.html`).size, 'Bytes');

@@ -46,9 +46,11 @@ function toast(msg: string, ms = 2600) {
 
 // ---------- Start ----------
 async function init() {
-  const loaded = await loadRoute('routes/hausrunde');
+  const loaded = await loadRoute('routes/hausrunde', msg => { $('loading').firstElementChild!.textContent = msg; });
   route = loaded.route;
-  world = new World($<HTMLCanvasElement>('view'), route, loaded.heights, { jersey: settings.jersey, jersey2: '#1d2a44', bike: '#20242b' }, quality);
+  $('loading').firstElementChild!.textContent = 'Sauerland wird aufgebaut …';
+  await new Promise(r => setTimeout(r, 30));
+  world = new World($<HTMLCanvasElement>('view'), route, loaded.heights, loaded.world, { jersey: settings.jersey, jersey2: '#1d2a44', bike: '#20242b' }, quality);
   profile = new ProfileChart($<HTMLCanvasElement>('profile'), route, { bg: 'rgba(13,22,19,.78)', labels: true });
   minimap = new MiniMap($<HTMLCanvasElement>('minimap'), route);
   new ProfileChart($<HTMLCanvasElement>('routeThumb'), route, { padTop: 18 }).draw(null);
@@ -57,7 +59,9 @@ async function init() {
   $('routeUp').textContent = `${fmt(route.data.ascent)} Hm`;
   $('routeMax').textContent = `${fmt(route.data.maxGrade, 1)} %`;
   $('attrib').textContent = route.data.attribution;
-  $('routeAttrib').textContent = `${route.data.attribution} · Wald nachempfunden (${fmt(world.treeCount)} Bäume)`;
+  $('routeAttrib').textContent = route.data.world
+    ? `${fmt(world.buildingCount)} Häuser und ${fmt(world.treeCount)} Bäume aus amtlichen Geodaten. ${route.data.attribution}`
+    : `${route.data.attribution} · Wald nachempfunden (${fmt(world.treeCount)} Bäume)`;
   onResize();
   $('loading').hidden = true;
   requestAnimationFrame(loop);
@@ -329,4 +333,4 @@ function updateHud(grade: number) {
   }
 }
 
-init().catch(e => { $('loading').textContent = `Fehler beim Laden: ${(e as Error).message}`; console.error(e); });
+init().catch(e => { $('loading').firstElementChild!.textContent = `Fehler beim Laden: ${(e as Error).message}`; console.error(e); });
