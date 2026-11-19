@@ -88,9 +88,26 @@ export function buildRoad(route: Route, width = 5.6) {
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   g.setIndex(idx); g.computeVertexNormals();
+  // Böschung: von der Fahrbahnkante 4 m nach außen und 3 m nach unten – verdeckt Spalten zum gröberen Gelände
+  const sp = new Float32Array(n * 12), sidx: number[] = [];
+  for (let k = 0; k < n; k++) {
+    const a = Math.max(0, k - 2), b = Math.min(n - 1, k + 2);
+    let dx = x[b] - x[a], dy = y[b] - y[a]; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+    const hh = h[k] + 0.1;
+    for (const [side, off] of [[1, 0], [-1, 6]] as const) {
+      const ex = -dy * side, ey = dx * side;
+      sp.set([x[k] + ex * width / 2, hh, -(y[k] + ey * width / 2), x[k] + ex * (width / 2 + 4), hh - 3, -(y[k] + ey * (width / 2 + 4))], k * 12 + off);
+    }
+  }
+  for (let k = 0; k < n - 1; k++) for (const off of [0, 2]) { const a = k * 4 + off; sidx.push(a, a + 4, a + 1, a + 1, a + 4, a + 5); }
+  const sg = new THREE.BufferGeometry();
+  sg.setAttribute('position', new THREE.BufferAttribute(sp, 3)); sg.setIndex(sidx); sg.computeVertexNormals();
+  const skirt = new THREE.Mesh(sg, new THREE.MeshLambertMaterial({ color: '#7f9458', side: THREE.DoubleSide }));
+  skirt.receiveShadow = true;
   const m = new THREE.MeshLambertMaterial({ map: roadTexture(), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide });
   const mesh = new THREE.Mesh(g, m); mesh.receiveShadow = true;
-  return mesh;
+  const group = new THREE.Group(); group.add(mesh, skirt);
+  return group;
 }
 
 export function buildTrees(hf: Heightfield, routeDist: (x: number, y: number) => number, route: Route, quality: 'low' | 'high') {
@@ -288,4 +305,95 @@ export class BuildingField {
   update(cam: THREE.Vector3) {
     for (const c of this.chunks) c.mesh.visible = Math.hypot(c.center.x - cam.x, c.center.z - cam.z) - 710 < this.farDist;
   }
+}
+
+// ---------- Gelände mit Nutzungskarte (ALKIS) ----------
+// Farben je Nutzungsklasse (Sommer). Acker: je Feld wechselnde Kultur + Bewirtschaftungsstreifen.
+const LU_COLORS: Record<number, string> = {
+  0: '#86a556', 1: '#8fb35b', 2: '#c2ad66', 3: '#45602f', 4: '#33492b', 5: '#3e5631', 6: '#a3a68a', 7: '#9b9993',
+  8: '#4d7390', 9: '#4b4c4f', 10: '#9a8e76', 11: '#6f6359', 12: '#aaa86e', 13: '#79ad5a', 14: '#8eab61', 15: '#a19f99',
+};
+const CROPS = ['#c9b15f', '#8a6c4b', '#9fc05e', '#b9b46a', '#d1bf78'].map(c => new THREE.Color(c));
+
+export function buildLanduseTerrain(hf: Heightfield, lu: Uint8Array, info: { px: number; w: number; h: number }, routeDist: (x: number, y: number) => number, quality: 'low' | 'high', raw?: Int16Array) {
+  const { x0, y0, cell, nx, ny } = hf.t;
+  const group = new THREE.Group();
+  const CH = Math.round(1000 / cell); // Zellen je Kachel (1 km)
+  const stride = quality === 'low' && cell < 20 ? 2 : 1; // Handy: jeden zweiten Rasterpunkt
+  const pal = new Map(Object.entries(LU_COLORS).map(([k, v]) => [Number(k), new THREE.Color(v)]));
+  const base = pal.get(0)!;
+  // Liegt ein Pixel im Ort? (Siedlung/Gewerbe/Platz im Umkreis von ~20 m)
+  const townAt = (li: number, lj: number) => {
+    for (const [a, b] of [[10, 0], [-10, 0], [0, 10], [0, -10], [7, 7], [-7, -7], [7, -7], [-7, 7]]) {
+      const i = li + a, j = lj + b; if (i < 0 || j < 0 || i >= info.w || j >= info.h) continue;
+      const c = lu[j * info.w + i]; if (c === 6 || c === 7) return true;
+    }
+    return false;
+  };
+  for (let cj = 0; cj < ny - 1; cj += CH) for (let ci = 0; ci < nx - 1; ci += CH) {
+    const ci1 = Math.min(ci + CH, nx - 1), cj1 = Math.min(cj + CH, ny - 1);
+    const ni = Math.floor((ci1 - ci) / stride) + 1, nj = Math.floor((cj1 - cj) / stride) + 1;
+    const cx0 = x0 + ci * cell, cy0 = y0 + cj * cell, wM = (ni - 1) * cell * stride, hM = (nj - 1) * cell * stride;
+    // Texturauflösung: nahe der Strecke 2 m, sonst 4 m (Handy überall 4 m)
+    const near = routeDist(cx0 + wM / 2, cy0 + hM / 2) < 900;
+    const mpp = quality === 'high' && near ? 2 : 4;
+    const tw = Math.ceil(wM / mpp), th = Math.ceil(hM / mpp);
+    const tex = new Uint8Array(tw * th * 4), c = new THREE.Color();
+    for (let ty = 0; ty < th; ty++) for (let tx = 0; tx < tw; tx++) {
+      const x = cx0 + (tx + 0.5) * mpp, y = cy0 + (ty + 0.5) * mpp;
+      const li = Math.floor((x - x0) / info.px), lj = Math.floor((y - y0) / info.px);
+      let cls = li >= 0 && lj >= 0 && li < info.w && lj < info.h ? lu[lj * info.w + li] : 0;
+      // Straßenfläche direkt neben unserer Fahrbahn: in Orten Gehweg (gepflastert), sonst Bankett (Gras)
+      if ((cls === 9 || cls === 10) && routeDist(x, y) < 12) cls = townAt(li, lj) ? 15 : 14;
+      if (cls === 2) {
+        // Feld: Kultur wechselt großräumig, Streifen in wechselnder Richtung
+        const crop = CROPS[Math.floor(fbm(x / 260 + 7, y / 260 - 3, 2) * CROPS.length * 1.3) % CROPS.length];
+        const ang = fbm(x / 400 - 11, y / 400 + 5, 2) * Math.PI * 2;
+        const stripe = Math.sin((x * Math.cos(ang) + y * Math.sin(ang)) * Math.PI / 4) * 0.06;
+        c.copy(crop).multiplyScalar(0.95 + stripe);
+      } else {
+        c.copy(pal.get(cls) ?? base);
+        if (cls === 1 || cls === 0 || cls === 13 || cls === 14) c.lerp(pal.get(12)!, fbm(x / 90, y / 90, 3) * 0.35); // Wiese: Flecken
+        if (cls === 6) c.lerp(pal.get(13)!, fbm(x / 12, y / 12, 2) * 0.6);                                   // Siedlung: Gärten
+        if (cls >= 3 && cls <= 5) c.multiplyScalar(0.85 + fbm(x / 25, y / 25, 2) * 0.3);                      // Waldboden
+      }
+      c.multiplyScalar(0.94 + fbm(x / 7, y / 7, 2) * 0.12);
+      const o = (ty * tw + tx) * 4;
+      tex[o] = Math.min(255, c.r * 255); tex[o + 1] = Math.min(255, c.g * 255); tex[o + 2] = Math.min(255, c.b * 255); tex[o + 3] = 255;
+    }
+    const t = new THREE.DataTexture(tex, tw, th, THREE.RGBAFormat);
+    t.colorSpace = THREE.LinearSRGBColorSpace; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true;
+
+    // Geometrie der Kachel; Vertexfarbe = Felsen an steilen Hängen
+    const pos = new Float32Array(ni * nj * 3), uv = new Float32Array(ni * nj * 2), col = new Float32Array(ni * nj * 3), nor = new Float32Array(ni * nj * 3);
+    const rh = (i: number, j: number) => { i = Math.max(0, Math.min(nx - 1, i)); j = Math.max(0, Math.min(ny - 1, j)); return raw ? raw[j * nx + i] * hf.t.scale : hf.raw(i, j); };
+    const rock = new THREE.Color('#8a8475'), white = new THREE.Color(1, 1, 1);
+    for (let j = 0; j < nj; j++) for (let i = 0; i < ni; i++) {
+      const gi = ci + i * stride, gj = cj + j * stride, k = j * ni + i, x = x0 + gi * cell, y = y0 + gj * cell;
+      pos[k * 3] = x; pos[k * 3 + 1] = hf.raw(gi, gj); pos[k * 3 + 2] = -y;
+      uv[k * 2] = (i * cell * stride) / (tw * mpp); uv[k * 2 + 1] = (j * cell * stride) / (th * mpp);
+      // Normale aus dem glatten Gelände (ohne Straßeneinschnitt)
+      const hx = rh(gi + stride, gj) - rh(gi - stride, gj), hy = rh(gi, gj + stride) - rh(gi, gj - stride), span = 2 * cell * stride;
+      const slope = Math.hypot(hx, hy) / span;
+      const nl = Math.hypot(hx, span, hy);
+      nor[k * 3] = -hx / nl; nor[k * 3 + 1] = span / nl; nor[k * 3 + 2] = hy / nl;
+      // Fels nur an sehr steilen Hängen abseits der Straße (Straßenböschungen sind im DGM1 steil, aber bewachsen)
+      const rockShare = routeDist(x, y) > 30 ? Math.min(0.6, Math.max(0, (slope - 1.0) * 1.2)) : 0;
+      c.copy(white).lerp(rock, rockShare);
+      col[k * 3] = c.r; col[k * 3 + 1] = c.g; col[k * 3 + 2] = c.b;
+    }
+    const idx: number[] = [];
+    for (let j = 0; j < nj - 1; j++) for (let i = 0; i < ni - 1; i++) { const a = j * ni + i, b = a + 1, d = a + ni, e = d + 1; idx.push(a, b, e, a, e, d); }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    g.setIndex(idx);
+    const mesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: t, vertexColors: true }));
+    mesh.receiveShadow = true;
+    group.add(mesh);
+  }
+  return group;
 }

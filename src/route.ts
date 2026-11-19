@@ -17,6 +17,8 @@ export interface RouteData {
     trees: { count: number; qxy: number };
     canopy: boolean;
   };
+  landuse?: { px: number; w: number; h: number; classes: Record<string, string> };
+  places?: { d: number; road: string | null; area: string | null }[];
 }
 
 /** Echte Weltdaten (Geobasis NRW), falls für die Strecke vorhanden */
@@ -24,6 +26,8 @@ export interface WorldData {
   buildings?: { pos: Uint16Array; col: Uint8Array };
   trees?: Uint8Array;
   canopy?: Uint8Array;
+  landuse?: Uint8Array;
+  rawHeights?: Int16Array; // Gelände ohne eingeschnittene Straße (für glatte Beleuchtung)
 }
 
 export interface RoutePose {
@@ -74,14 +78,15 @@ export class Route {
 
 // In der Artefakt-Vorschau liegen Binärdaten als Base64-JSON vor (dort sind nur Standard-Dateitypen erlaubt)
 async function fetchBin(base: string, name: string): Promise<ArrayBuffer> {
+  const file = name.includes('.') ? name : `${name}.bin`;
   if (import.meta.env.MODE === 'artifact') {
-    const r = await fetch(`${base}/${name}.json`); if (!r.ok) throw new Error(`${name}: ${r.status}`);
+    const r = await fetch(`${base}/${file.replace(/\.bin$/, '')}.json`); if (!r.ok) throw new Error(`${name}: ${r.status}`);
     const { b64 } = await r.json() as { b64: string };
     const bin = atob(b64), out = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out.buffer;
   }
-  const r = await fetch(`${base}/${name}.bin`); if (!r.ok) throw new Error(`${name}.bin: ${r.status}`);
+  const r = await fetch(`${base}/${file}`); if (!r.ok) throw new Error(`${file}: ${r.status}`);
   return r.arrayBuffer();
 }
 
@@ -92,11 +97,23 @@ export async function loadRoute(base: string, onProgress?: (msg: string) => void
   const world: WorldData = {};
   if (data.world) {
     onProgress?.(`${data.world.buildings.count.toLocaleString('de-DE')} Häuser und ${data.world.trees.count.toLocaleString('de-DE')} Bäume werden geladen …`);
-    const [b, t, c] = await Promise.all([fetchBin(base, 'buildings'), fetchBin(base, 'trees'), fetchBin(base, 'canopy')]);
+    // Kronendach nur nötig, wenn keine Nutzungskarte vorliegt
+    const [b, t, c] = await Promise.all([fetchBin(base, 'buildings'), fetchBin(base, 'trees'), data.landuse ? Promise.resolve(null) : fetchBin(base, 'canopy')]);
     const nV = data.world.buildings.vertices;
     world.buildings = { pos: new Uint16Array(b, 0, nV * 3), col: new Uint8Array(b, nV * 6, nV / 3) };
     world.trees = new Uint8Array(t);
-    world.canopy = new Uint8Array(c);
+    if (c) world.canopy = new Uint8Array(c);
+    try { world.rawHeights = new Int16Array(await fetchBin(base, 'terrain_raw')); } catch { /* optional */ }
+  }
+  if (data.landuse) {
+    onProgress?.('Felder, Wiesen und Wege werden geladen …');
+    try {
+      const buf = new Uint8Array(await fetchBin(base, 'landuse'));
+      // gzip-komprimiert gespeichert; manche Server entpacken schon beim Ausliefern → Kennung prüfen
+      world.landuse = buf[0] === 0x1f && buf[1] === 0x8b
+        ? new Uint8Array(await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer())
+        : buf;
+    } catch (e) { console.warn('Nutzungskarte nicht geladen', e); }
   }
   return { route: new Route(data), heights, world };
 }

@@ -10,6 +10,7 @@ import { Recorder } from './recorder';
 import { buildFit } from './fit';
 import { ProfileChart, MiniMap, drawWorkout, gradeColor, zoneColor } from './ui/charts';
 import { GamepadInput, type PadAction } from './ui/gamepad';
+import { PlacePicker, placeList, placeLabel } from './ui/places';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const fmt = (n: number, d = 0) => n.toLocaleString('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -26,7 +27,8 @@ function saveSettings() { try { localStorage.setItem('sauerland.settings', JSON.
 const settings = loadSettings();
 
 // ---------- Zustand ----------
-let route: Route, world: World, profile: ProfileChart, minimap: MiniMap;
+let route: Route, world: World, profile: ProfileChart, minimap: MiniMap, picker: PlacePicker;
+let chosenStart: number | null = null;
 let trainer: Trainer | null = null, hrm: HeartRateMonitor | null = null;
 let power = 0, cadence = 0, hr: number | undefined, hrFromStrap = false;
 let running = false, paused = false;
@@ -63,7 +65,9 @@ async function init() {
     ? `${fmt(world.buildingCount)} Häuser und ${fmt(world.treeCount)} Bäume aus amtlichen Geodaten. ${route.data.attribution}`
     : `${route.data.attribution} · Wald nachempfunden (${fmt(world.treeCount)} Bäume)`;
   onResize();
+  picker = new PlacePicker(route, d => jumpTo(d));
   dist = startDist();
+  updateStartLabel();
   $('loading').hidden = true;
   requestAnimationFrame(loop);
 }
@@ -227,6 +231,7 @@ $('btnGo').onclick = async () => {
   dist = startDist(); speed = 0; elapsed = 0; lastSampleSec = -1; ergBias = 0; recorder = new Recorder();
   ergTarget = Math.round(settings.ftp * 0.65 / 5) * 5;
   applyMode();
+  $('btnPlaces').hidden = !trainer.simulated;
   onResize();
   try { wakeLock = await (navigator as unknown as { wakeLock?: { request(t: string): Promise<{ release(): Promise<void> }> } }).wakeLock?.request('screen') ?? null; } catch { /* optional */ }
   toast(trainer.simulated ? 'Simulator: Leistung unten einstellen' : 'Gute Fahrt!');
@@ -262,13 +267,38 @@ $('btnFit').onclick = () => {
     toast(window.self !== window.top ? 'In der Vorschau kann der Browser keine Dateien speichern – in der richtigen App klappt es.' : `${name} gespeichert`, 4000);
   } catch (e) { toast(`FIT-Export fehlgeschlagen: ${(e as Error).message}`); }
 };
-$('btnAgain').onclick = () => { $('done').hidden = true; $('start').hidden = false; dist = 0; };
+$('btnAgain').onclick = () => { $('done').hidden = true; $('start').hidden = false; dist = startDist(); world.snapCamera(); };
 
 // Startpunkt per Adresse wählbar, z. B. ?km=12.5 (zum Testen einzelner Abschnitte)
 function startDist() {
+  if (chosenStart !== null) return chosenStart;
   const km = Number(new URLSearchParams(location.search).get('km'));
   return Number.isFinite(km) && km > 0 ? Math.min(route.length - 100, km * 1000) : 0;
 }
+
+// ---------- Springen ----------
+const canJump = () => !running || !!trainer?.simulated;
+function jumpTo(d: number) {
+  d = Math.max(0, Math.min(route.length - 50, d));
+  if (!canJump()) { toast('Springen geht während einer echten Fahrt nicht – nur im Simulator oder vor dem Start'); return; }
+  if (running) { dist = d; toast(`Weiter bei km ${fmt(d / 1000, 1)}`); }
+  else { chosenStart = d; dist = d; updateStartLabel(); }
+  world.snapCamera();
+  picker.hide();
+}
+function updateStartLabel() {
+  const places = placeList(route);
+  const p = [...places].reverse().find(x => x.d <= dist + 1) ?? places[0];
+  $('startAtLabel').textContent = `km ${fmt(dist / 1000, 1)} · ${placeLabel(p)}${p.area && p.road ? `, ${p.area}` : ''}`;
+}
+$('btnStartAt').onclick = () => picker.show(dist);
+$('btnPlaces').onclick = () => { if (canJump()) picker.show(dist); else toast('Springen geht nur im Simulator'); };
+$('btnPlacesClose').onclick = () => picker.hide();
+$('profile').addEventListener('pointerdown', e => {
+  if (!running || !canJump()) return;
+  const r = $('profile').getBoundingClientRect();
+  jumpTo((e.clientX - r.left) / r.width * route.length);
+});
 
 // ---------- Hauptschleife ----------
 let last = performance.now(), lastPhysics = performance.now(), hudTimer = 0;
@@ -340,4 +370,5 @@ function updateHud(grade: number) {
   }
 }
 
+(window as unknown as { __sauerland: unknown }).__sauerland = { get world() { return world; } };
 init().catch(e => { $('loading').firstElementChild!.textContent = `Fehler beim Laden: ${(e as Error).message}`; console.error(e); });

@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import type { Route, WorldData } from '../route';
 import { Avatar, type AvatarStyle } from './avatar';
-import { BuildingField, Heightfield, TreeField, buildRoad, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
+import { BuildingField, Heightfield, TreeField, buildLanduseTerrain, buildRoad, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
 
 export const cameraModes = ['Verfolger', 'Seite', 'Ego', 'Drohne'] as const;
 export type CameraMode = typeof cameraModes[number];
@@ -45,7 +45,8 @@ export class World {
 
     this.hf = new Heightfield(heights, route.data.terrain);
     const dist = makeRouteDistance(route, route.data.terrain);
-    this.scene.add(buildTerrain(this.hf, dist, data.canopy));
+    const lu = route.data.landuse;
+    this.scene.add(data.landuse && lu ? buildLanduseTerrain(this.hf, data.landuse, lu, dist, quality, data.rawHeights) : buildTerrain(this.hf, dist, data.canopy));
     this.scene.add(buildRoad(route));
     const w = route.data.world;
     const fogFar = (this.scene.fog as THREE.Fog).far;
@@ -127,6 +128,9 @@ export class World {
     this.sun.target.position.copy(a.position);
     this.renderer.render(this.scene, this.camera);
   }
+
+  /** Kamera ohne Nachziehen neu setzen (nach einem Sprung) */
+  snapCamera() { this.first = true; this.lodTimer = 0; }
 
   nextCamera(dir = 1) {
     const i = cameraModes.indexOf(this.cameraMode);

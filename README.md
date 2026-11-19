@@ -13,6 +13,7 @@ Indoortraining im Browser auf den eigenen Hausstrecken – mit 3D-Avatar, Frei- 
 - **Controller-Bedienung** (z. B. MSI Claw): Steuerkreuz ↑/↓ = Wert ±, LB/RB = Kamera, A/Start = Pause, Y = Modus wechseln
 - **FIT-Export** als „Virtuelle Radfahrt“ inkl. GPS-Spur → bei Strava hochladen
 - **Simulator:** ohne Trainer ausprobieren (z. B. am Handy)
+- **Ortsauswahl:** Startpunkt per Karte, Höhenprofil oder Liste (Straßen- und Ortsnamen) wählen; im Simulator auch während der Fahrt springen
 
 ## Browser
 
@@ -36,7 +37,10 @@ npm run build        # Produktions-Build nach dist/
 3. Strecken-Paket bauen (Höhenraster + geglättete Straße):
    `node scripts/prepare-route.mjs routes/meinestrecke.gpx public/routes/meinestrecke`
 
-4. Echte Welt aus amtlichen Geodaten NRW (Häuser, Bäume, genaues Gelände):
+4. Nutzungskarte (Felder, Wiesen, Wald, Straßen, Wege, Gewässer) und Ortsnamen aus ALKIS
+   (GeoPackage „Grundrissdaten vereinfacht“ der betroffenen Kreise von opengeodata.nrw.de):
+   `python3 scripts/prepare-landuse.py public/routes/meinestrecke pfad/zu/*.gpkg`
+5. Echte Welt aus amtlichen Geodaten NRW (Häuser, Bäume, genaues Gelände):
    `NODE_USE_ENV_PROXY=1 node scripts/prepare-world.mjs public/routes/meinestrecke`
 
 ### Datenquellen
@@ -46,6 +50,7 @@ npm run build        # Produktions-Build nach dist/
 | DGM1 – Geländemodell 1 m | Geobasis NRW | Gelände und Straßenhöhe |
 | 3D-Gebäudemodell LoD2 | Geobasis NRW | Häuser mit echten Dachformen, Farbe nach Gebäudeart |
 | nDOM 50 cm – Höhe über Grund | Geobasis NRW | einzelne Bäume (Position, Höhe, Krone, Laub/Nadel) und Waldflächen |
+| ALKIS Grundrissdaten (vereinfacht) | Geobasis NRW | Nutzung: Acker, Grünland, Wald, Siedlung, Straßen, Wege, Gewässer; Straßen- und Gemarkungsnamen für die Ortsauswahl |
 | Terrain Tiles | Mapzen / AWS Open Data | Gelände außerhalb von NRW (Rückfall) |
 
 Geobasis-NRW-Daten stehen unter der Datenlizenz Deutschland – Zero – Version 2.0.

@@ -8,7 +8,7 @@ import path from 'node:path';
 import { PNG } from 'pngjs';
 
 const [, , input, outDir] = process.argv;
-const ZOOM = 13, CELL = 20, MARGIN = 1200, STEP = 5;
+const ZOOM = 13, CELL = 10, MARGIN = 1200, STEP = 5;
 const CACHE = path.join(path.dirname(new URL(import.meta.url).pathname), '.cache');
 fs.mkdirSync(CACHE, { recursive: true });
 fs.mkdirSync(outDir, { recursive: true });

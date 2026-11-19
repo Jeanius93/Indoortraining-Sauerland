@@ -15,9 +15,28 @@ const BASE = 'https://www.opengeodata.nrw.de/produkte/geobasis';
 const CACHE = path.join(path.dirname(new URL(import.meta.url).pathname), '.cache');
 for (const d of ['lod2', 'dgm1', 'ndom', 'proc']) fs.mkdirSync(path.join(CACHE, d), { recursive: true });
 
-const route = JSON.parse(fs.readFileSync(path.join(dir, 'route.json'), 'utf8'));
+// Ausgangsdaten von prepare-route.mjs beim ersten Lauf sichern, damit das Skript wiederholbar ist
+const baseDir = path.join(CACHE, 'base', path.basename(dir));
+if (!fs.existsSync(path.join(baseDir, 'route.json'))) {
+  fs.mkdirSync(baseDir, { recursive: true });
+  fs.copyFileSync(path.join(dir, 'route.json'), path.join(baseDir, 'route.json'));
+  fs.copyFileSync(path.join(dir, 'terrain.bin'), path.join(baseDir, 'terrain.bin'));
+}
+const current = JSON.parse(fs.readFileSync(path.join(dir, 'route.json'), 'utf8'));
+const route = JSON.parse(fs.readFileSync(path.join(baseDir, 'route.json'), 'utf8'));
+for (const k of ['places', 'landuse']) if (current[k]) route[k] = current[k]; // von prepare-landuse.py
 const T = route.terrain, { x0, y0, cell, nx, ny } = T;
-const oldGrid = new Int16Array(fs.readFileSync(path.join(dir, 'terrain.bin')).buffer.slice(0));
+const oldGrid = new Int16Array(fs.readFileSync(path.join(baseDir, 'terrain.bin')).buffer.slice(0));
+
+// Nutzungskarte (optional, von prepare-landuse.py): keine Bäume auf Straßen, Wegen, Gewässern, Äckern
+const LU = route.landuse && fs.existsSync(path.join(dir, 'landuse.bin'))
+  ? new Uint8Array((await import('node:zlib')).gunzipSync(fs.readFileSync(path.join(dir, 'landuse.bin')))) : null;
+const luAt = (x, y) => {
+  if (!LU) return 0;
+  const i = Math.round((x - x0) / route.landuse.px), j = Math.round((y - y0) / route.landuse.px);
+  return i < 0 || j < 0 || i >= route.landuse.w || j >= route.landuse.h ? 0 : LU[j * route.landuse.w + i];
+};
+const NO_TRUNK = new Set([2, 8, 9, 10, 11]), NO_CROWN = new Set([9, 10, 11]);
 
 // ---------- Koordinaten: lokal (m) ⇄ WGS84 ⇄ UTM32 ----------
 const R = 6378137, rad = Math.PI / 180, { lat: lat0, lon: lon0 } = route.origin;
@@ -169,6 +188,7 @@ function parseLod2(file, E0, N0, affine) {
 
 // ---------- Bäume (nDOM) ----------
 const trees = [];
+let skipped = 0;
 function rasterizeMask(fps, E0, N0, size) { // Gebäude-Grundrisse auf 1-m-Raster (Zeile 0 = Norden)
   const mask = new Uint8Array(size * size);
   for (const ring of fps) {
@@ -197,7 +217,8 @@ function processNdom(t, mask, E0, N0, affine) {
     const E = gridUtm[k * 2], N = gridUtm[k * 2 + 1];
     if (E < E0 || E >= E0 + 1000 || N < N0 || N >= N0 + 1000) continue;
     const ci = Math.floor(E - E0), cj = Math.floor(N0 + 1000 - N); let c = 0, n = 0;
-    for (let j = cj - 10; j < cj + 10; j += 2) for (let i = ci - 10; i < ci + 10; i += 2) { if (i < 0 || j < 0 || i >= S || j >= S) continue; n++; if (H[j * S + i] > 2.5) c++; }
+    const hw = Math.round(cell / 2);
+    for (let j = cj - hw; j < cj + hw; j += 2) for (let i = ci - hw; i < ci + hw; i += 2) { if (i < 0 || j < 0 || i >= S || j >= S) continue; n++; if (H[j * S + i] > 2.5) c++; }
     canopy[k] = n ? Math.round(c / n * 255) : 0;
   }
   // Baumwipfel: lokale Maxima, Mindestabstand je nach Entfernung zur Straße (nah = jeder Baum, fern = Gruppen)
@@ -208,7 +229,7 @@ function processNdom(t, mask, E0, N0, affine) {
     if (!isMax) continue;
     const E = E0 + i + 0.5, N = N0 + 1000 - j - 0.5, [lx, ly] = affine(E, N), d = routeDist(lx, ly);
     if (d < 4.5 || d > 1600 || !inBox(lx, ly)) continue;
-    const Rm = d < 150 ? 3.5 : d < 500 ? 7 : 13, r = Math.ceil(Rm);
+    const Rm = d < 150 ? 4.5 : d < 500 ? 9 : 16, r = Math.ceil(Rm);
     let keep = true;
     for (let b = -r; b <= r && keep; b++) for (let a = -r; a <= r; a++) {
       if (a * a + b * b > Rm * Rm || (a === 0 && b === 0)) continue;
@@ -228,7 +249,15 @@ function processNdom(t, mask, E0, N0, affine) {
     let ring = 0, rn = 0;
     for (let b = -3; b <= 3; b++) for (let a = -3; a <= 3; a++) { const q = a * a + b * b; if (q < 4 || q > 9) continue; ring += H[(j + b) * S + i + a]; rn++; }
     const sharp = (h - ring / rn) / h;
-    if (Rm > 3.5) crown = Math.max(crown, Rm * 0.75);
+    if (Rm > 4.5) crown = Math.max(crown, Rm * 0.7);
+    // Stamm nicht auf Straße/Weg/Wasser/Acker; Krone darf nicht über Fahrbahnen ragen → Krone verkleinern oder Baum weglassen
+    if (NO_TRUNK.has(luAt(lx, ly))) { skipped++; continue; }
+    crown = Math.min(crown, d - 3.4); // Hauptstrecke: 2,8 m halbe Fahrbahn + Abstand
+    for (let a = 0; a < 8 && crown >= 1; a++) {
+      const ang = a * Math.PI / 4;
+      for (let rr = 1; rr <= crown; rr += 1) if (NO_CROWN.has(luAt(lx + Math.cos(ang) * rr, ly + Math.sin(ang) * rr))) { crown = rr - 0.7; break; }
+    }
+    if (crown < 1) { skipped++; continue; }
     trees.push([lx, ly, h, crown, sharp]);
   }
 }
@@ -247,9 +276,9 @@ function processDgm(t) {
   for (let k = 0; k < nx * ny; k++) {
     const E = gridUtm[k * 2], N = gridUtm[k * 2 + 1];
     if (E < E0 || E >= E0 + 1000 || N > N1 || N <= N1 - 1000) continue;
-    // Mittel über 9 Punkte im Umkreis von 6 m (glättet Kanten, das 20-m-Raster soll die Fläche repräsentieren)
-    let s = 0, n = 0;
-    for (const dy of [-6, 0, 6]) for (const dx of [-6, 0, 6]) { const v = sample(E + dx, N + dy); if (!isNaN(v)) { s += v; n++; } }
+    // Mittel über 9 Punkte (Abstand ≈ ⅓ Rasterweite) – das Raster soll die Fläche repräsentieren
+    let s = 0, n = 0; const o = cell / 3;
+    for (const dy of [-o, 0, o]) for (const dx of [-o, 0, o]) { const v = sample(E + dx, N + dy); if (!isNaN(v)) { s += v; n++; } }
     if (n) { grid[k] = s / n; gridFromDgm[k] = 1; }
   }
   // Straße: quer zur Fahrtrichtung ±6 m abtasten und den Wert nehmen, der der (barometrischen) Aufzeichnung am nächsten liegt
@@ -310,8 +339,11 @@ for (let k = 1; k < route.h.length; k++) up += Math.max(0, route.h[k] - route.h[
 for (let k = 4; k < route.h.length; k++) { const g = (route.h[k] - route.h[k - 4]) / (4 * route.step) * 100; maxG = Math.max(maxG, g); minG = Math.min(minG, g); }
 route.ascent = Math.round(up); route.maxGrade = Math.round(maxG * 10) / 10; route.minGrade = Math.round(minG * 10) / 10;
 
+// Unverändertes Gelände sichern: daraus berechnet der Client die Beleuchtung (keine Terrassen-Kanten)
+fs.writeFileSync(path.join(dir, 'terrain_raw.bin'), Buffer.from(Int16Array.from(grid, h => Math.round(h * 10)).buffer));
+
 // ---------- Straße ins Gelände einschneiden ----------
-const FLAT = 12, BLEND = 45, HB = 60, hash = new Map();
+const FLAT = cell * 0.75, BLEND = cell * 3, HB = 60, hash = new Map();
 route.x.forEach((x, k) => { const kk = `${Math.floor(x / HB)}_${Math.floor(route.y[k] / HB)}`; (hash.get(kk) ?? hash.set(kk, []).get(kk)).push(k); });
 for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
   const x = x0 + i * cell, y = y0 + j * cell, cx = Math.floor(x / HB), cy = Math.floor(y / HB);
@@ -366,4 +398,5 @@ route.attribution = 'Geodaten: Geobasis NRW (DGM1, nDOM, 3D-Gebäudemodell LoD2)
 fs.writeFileSync(path.join(dir, 'route.json'), JSON.stringify(route));
 const dgmShare = gridFromDgm.reduce((a, b) => a + b, 0) / gridFromDgm.length;
 console.log(`Gelände aus DGM1: ${(dgmShare * 100).toFixed(0)} % · Straße: ${route.ascent} Hm, ${route.minGrade}…${route.maxGrade} %`);
+console.log(`Bäume verworfen (Straße/Weg/Wasser/Acker): ${skipped}`);
 console.log(`Gebäude: ${buildings.count} (${(nV / 3).toFixed(0)} Dreiecke, ${(outPos.byteLength / 1e6).toFixed(1)} MB) · Bäume: ${trees.length} (Nadel-Grenze ${sharpCut.toFixed(2)})`);

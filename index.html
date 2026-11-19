@@ -46,6 +46,7 @@
     <div class="actions">
       <button id="btnMode" class="chip">Frei</button>
       <button id="btnCam" class="chip">Verfolger</button>
+      <button id="btnPlaces" class="chip">Orte</button>
       <button id="btnPause" class="chip">Pause</button>
       <button id="btnEnd" class="chip danger">Beenden</button>
     </div>
@@ -71,6 +72,7 @@
           <div><dt>Anstieg</dt><dd id="routeUp">–</dd></div>
           <div><dt>max. Steigung</dt><dd id="routeMax">–</dd></div>
         </dl>
+        <button id="btnStartAt" class="start-at"><span>Startpunkt</span><b id="startAtLabel">km 0 · Anfang</b><i>ändern</i></button>
         <p class="small" id="routeAttrib"></p>
       </div>
     </article>
@@ -117,6 +119,20 @@
     <a class="go ghost" href="https://www.strava.com/upload/select" target="_blank" rel="noopener">Bei Strava hochladen ↗</a>
     <p class="small" id="fitHint">Die FIT-Datei bei Strava unter „Hochladen → Datei“ auswählen. Sie erscheint als „Virtuelle Radfahrt“ mit deiner Strecke auf der Karte.</p>
     <button id="btnAgain" class="go ghost">Neue Fahrt</button>
+  </div>
+</section>
+
+<!-- Ortsauswahl -->
+<section id="places" class="sheet" hidden aria-label="Ort wählen">
+  <div class="sheet-inner">
+    <header class="places-head">
+      <div class="brand"><span class="eyebrow">Springen</span><h2>Ort wählen</h2></div>
+      <button id="btnPlacesClose" class="chip">Schließen</button>
+    </header>
+    <p class="small">Tippe auf die Karte oder das Höhenprofil, oder wähle einen Abschnitt aus der Liste.</p>
+    <canvas id="placesMap" aria-label="Karte der Strecke"></canvas>
+    <canvas id="placesProfile" aria-label="Höhenprofil"></canvas>
+    <ol id="placesList" class="places-list"></ol>
   </div>
 </section>
 
