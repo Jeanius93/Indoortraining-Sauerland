@@ -19,6 +19,7 @@ export interface RouteData {
   };
   landuse?: { px: number; w: number; h: number; classes: Record<string, string> };
   places?: { d: number; road: string | null; area: string | null }[];
+  surface?: { from: number; to: number; type: 'radweg' }[];
 }
 
 /** Echte Weltdaten (Geobasis NRW), falls für die Strecke vorhanden */
@@ -28,6 +29,8 @@ export interface WorldData {
   canopy?: Uint8Array;
   landuse?: Uint8Array;
   rawHeights?: Int16Array; // Gelände ohne eingeschnittene Straße (für glatte Beleuchtung)
+  sideRoads?: { w: number[]; p: number[][] }[]; // abzweigende Straßen [x, y, h]
+  ortho?: Map<string, ImageData>;                // Luftbild je Geländekachel ("ci_cj"), Zeile 0 = Süden
 }
 
 export interface RoutePose {
@@ -105,6 +108,36 @@ export async function loadRoute(base: string, onProgress?: (msg: string) => void
     if (c) world.canopy = new Uint8Array(c);
     try { world.rawHeights = new Int16Array(await fetchBin(base, 'terrain_raw')); } catch { /* optional */ }
   }
+  try {
+    const r = await fetch(`${base}/roads.json`);
+    if (r.ok) world.sideRoads = (await r.json() as { roads: WorldData['sideRoads'] }).roads;
+  } catch { /* optional */ }
+  try {
+    const r = await fetch(`${base}/ortho.json`);
+    if (r.ok) {
+      const man = await r.json() as { tiles: Record<string, number> };
+      const keys = Object.keys(man.tiles), out = new Map<string, ImageData>();
+      let done = 0;
+      const worker = async () => {
+        for (let k = keys.shift(); k; k = keys.shift()) {
+          const res = await fetch(`${base}/ortho/${k}.jpg`);
+          if (res.ok) {
+            const url = URL.createObjectURL(await res.blob()), img = new Image(); img.src = url;
+            await img.decode();
+            // Pixel auslesen, Zeilen umdrehen (Süden unten = v 0) → als Rohdaten-Textur hochladen
+            const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height;
+            const g = cv.getContext('2d', { willReadFrequently: true })!;
+            g.translate(0, img.height); g.scale(1, -1); g.drawImage(img, 0, 0);
+            out.set(k, g.getImageData(0, 0, img.width, img.height));
+            URL.revokeObjectURL(url);
+          }
+          onProgress?.(`Luftbilder ${++done} / ${Object.keys(man.tiles).length} …`);
+        }
+      };
+      await Promise.all(Array.from({ length: 6 }, worker));
+      world.ortho = out;
+    }
+  } catch (e) { console.warn('Luftbilder nicht geladen', e); }
   if (data.landuse) {
     onProgress?.('Felder, Wiesen und Wege werden geladen …');
     try {

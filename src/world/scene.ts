@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import type { Route, WorldData } from '../route';
 import { Avatar, type AvatarStyle } from './avatar';
-import { BuildingField, Heightfield, TreeField, buildLanduseTerrain, buildRoad, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
+import { BuildingField, Heightfield, TreeField, buildLanduseTerrain, buildRoad, buildSideRoads, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
 
 export const cameraModes = ['Verfolger', 'Seite', 'Ego', 'Drohne'] as const;
 export type CameraMode = typeof cameraModes[number];
@@ -14,7 +14,7 @@ export class World {
   readonly avatar: Avatar;
   readonly hf: Heightfield;
   cameraMode: CameraMode = 'Verfolger';
-  private sun = new THREE.DirectionalLight('#fff4e0', 2.2);
+  private sun = new THREE.DirectionalLight('#fff0d4', 2.6);
   private camPos = new THREE.Vector3();
   private camLook = new THREE.Vector3();
   private first = true;
@@ -30,15 +30,18 @@ export class World {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.05;
 
-    const sky = new THREE.Color('#9cc3e6'), haze = new THREE.Color('#c9d8de');
+    const sky = new THREE.Color('#7fa9d6'), haze = new THREE.Color('#c4d3dc');
     this.scene.background = sky;
     this.scene.fog = new THREE.Fog(haze, 300, quality === 'high' ? 4200 : 2600);
-    this.scene.add(new THREE.HemisphereLight('#dceaff', '#6b7a55', 1.7));
+    this.scene.add(new THREE.HemisphereLight('#d6e6ff', '#5f6a48', 1.35));
     this.sun.position.set(-300, 500, 200);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(1024, 1024);
-    const sc = this.sun.shadow.camera; sc.left = -12; sc.right = 12; sc.top = 12; sc.bottom = -12; sc.near = 1; sc.far = 1500;
+    this.sun.shadow.mapSize.set(quality === 'high' ? 2048 : 1024, quality === 'high' ? 2048 : 1024);
+    const R = quality === 'high' ? 45 : 14, sc = this.sun.shadow.camera;
+    sc.left = -R; sc.right = R; sc.top = R; sc.bottom = -R; sc.near = 1; sc.far = 1500;
+    this.sun.shadow.normalBias = 0.03;
     this.sun.shadow.bias = -0.0005;
     this.scene.add(this.sun, this.sun.target);
     this.scene.add(this.skyDome(sky, haze));
@@ -46,8 +49,9 @@ export class World {
     this.hf = new Heightfield(heights, route.data.terrain);
     const dist = makeRouteDistance(route, route.data.terrain);
     const lu = route.data.landuse;
-    this.scene.add(data.landuse && lu ? buildLanduseTerrain(this.hf, data.landuse, lu, dist, quality, data.rawHeights) : buildTerrain(this.hf, dist, data.canopy));
+    this.scene.add(data.landuse && lu ? buildLanduseTerrain(this.hf, data.landuse, lu, dist, quality, data.rawHeights, data.ortho) : buildTerrain(this.hf, dist, data.canopy));
     this.scene.add(buildRoad(route));
+    if (data.sideRoads) this.scene.add(buildSideRoads(data.sideRoads));
     const w = route.data.world;
     const fogFar = (this.scene.fog as THREE.Fog).far;
     if (data.buildings && w) {
@@ -70,9 +74,17 @@ export class World {
     const g = new THREE.SphereGeometry(8000, 24, 12);
     const m = new THREE.ShaderMaterial({
       side: THREE.BackSide, depthWrite: false, fog: false,
-      uniforms: { top: { value: top.clone().multiplyScalar(0.85) }, horizon: { value: horizon } },
-      vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-      fragmentShader: 'uniform vec3 top; uniform vec3 horizon; varying vec3 vP; void main(){ float t = pow(clamp(vP.y,0.0,1.0),0.55); gl_FragColor = vec4(mix(horizon, top, t),1.0); }',
+      uniforms: { top: { value: top.clone().multiplyScalar(0.85) }, horizon: { value: horizon }, sunDir: { value: new THREE.Vector3(-300, 500, 200).normalize() } },
+      vertexShader: 'varying vec3 vD; void main(){ vD = normalize((modelMatrix * vec4(position,1.0)).xyz - cameraPosition); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+      fragmentShader: `uniform vec3 top; uniform vec3 horizon; uniform vec3 sunDir; varying vec3 vD;
+        void main(){ vec3 d = normalize(vD); float t = pow(clamp(d.y, 0.0, 1.0), 0.5);
+          vec3 c = mix(horizon, top, t);
+          float s = max(dot(d, sunDir), 0.0);
+          c += vec3(1.0, 0.92, 0.75) * (pow(s, 600.0) * 2.5 + pow(s, 12.0) * 0.18);
+          gl_FragColor = vec4(c, 1.0);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }`,
     });
     const mesh = new THREE.Mesh(g, m); mesh.renderOrder = -1; mesh.frustumCulled = false;
     this.camera.add(mesh); this.scene.add(this.camera);

@@ -24,7 +24,7 @@ if (!fs.existsSync(path.join(baseDir, 'route.json'))) {
 }
 const current = JSON.parse(fs.readFileSync(path.join(dir, 'route.json'), 'utf8'));
 const route = JSON.parse(fs.readFileSync(path.join(baseDir, 'route.json'), 'utf8'));
-for (const k of ['places', 'landuse']) if (current[k]) route[k] = current[k]; // von prepare-landuse.py
+for (const k of ['places', 'landuse', 'surface']) if (current[k]) route[k] = current[k]; // von prepare-landuse.py / prepare-roads.py
 const T = route.terrain, { x0, y0, cell, nx, ny } = T;
 const oldGrid = new Int16Array(fs.readFileSync(path.join(baseDir, 'terrain.bin')).buffer.slice(0));
 
@@ -98,6 +98,18 @@ const routeDist = (x, y) => { const i = Math.round((x - x0) / DC), j = Math.roun
 const gridUtm = new Float64Array(nx * ny * 2);
 for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { const [E, N] = localToUtm(x0 + i * cell, y0 + j * cell); gridUtm[(j * nx + i) * 2] = E; gridUtm[(j * nx + i) * 2 + 1] = N; }
 const routeUtm = route.x.map((x, k) => localToUtm(x, route.y[k]));
+
+// Abzweigende Straßen (von prepare-roads.py), auf ≤ 5 m verdichtet
+const roadsFile = path.join(dir, 'roads.json');
+const sideRoads = fs.existsSync(roadsFile) ? JSON.parse(fs.readFileSync(roadsFile, 'utf8')).roads.map(r => {
+  const pts = [], w = [];
+  for (let i = 0; i < r.p.length - 1; i++) {
+    const [ax, ay] = r.p[i], [bx, by] = r.p[i + 1], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 5));
+    for (let s = 0; s < n; s++) { const t = s / n; pts.push([ax + (bx - ax) * t, ay + (by - ay) * t]); w.push(r.w[i] + (r.w[i + 1] - r.w[i]) * t); }
+  }
+  pts.push(r.p.at(-1).slice(0, 2)); w.push(r.w.at(-1));
+  return { pts, w, utm: pts.map(([x, y]) => localToUtm(x, y)), dgm: pts.map(() => NaN) };
+}) : [];
 const grid = new Float32Array(nx * ny).map((_, k) => oldGrid[k] * T.scale);
 const gridFromDgm = new Uint8Array(nx * ny);
 const canopy = new Uint8Array(nx * ny);
@@ -288,6 +300,12 @@ function processDgm(t) {
     let dx = b[0] - a[0], dy = b[1] - a[1]; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
     for (let o = -6; o <= 6; o += 1.5) { const v = sample(E - dy * o, N + dx * o); if (!isNaN(v)) dgmLat[k].push(v); }
   }
+  for (const r of sideRoads) r.utm.forEach(([E, N], k) => {
+    if (E < E0 || E >= E0 + 1000 || N > N1 || N <= N1 - 1000) return;
+    // Mittel aus Mitte und ±1 m quer (DGM1 ist auf der Fahrbahn glatt)
+    const v = [sample(E, N), sample(E + 1, N), sample(E - 1, N), sample(E, N + 1), sample(E, N - 1)].filter(q => !isNaN(q));
+    if (v.length) r.dgm[k] = v.reduce((a, b) => a + b, 0) / v.length;
+  });
 }
 
 // ---------- Kacheln abarbeiten ----------
@@ -342,17 +360,50 @@ route.ascent = Math.round(up); route.maxGrade = Math.round(maxG * 10) / 10; rout
 // Unverändertes Gelände sichern: daraus berechnet der Client die Beleuchtung (keine Terrassen-Kanten)
 fs.writeFileSync(path.join(dir, 'terrain_raw.bin'), Buffer.from(Int16Array.from(grid, h => Math.round(h * 10)).buffer));
 
-// ---------- Straße ins Gelände einschneiden ----------
-const FLAT = cell * 0.75, BLEND = cell * 3, HB = 60, hash = new Map();
-route.x.forEach((x, k) => { const kk = `${Math.floor(x / HB)}_${Math.floor(route.y[k] / HB)}`; (hash.get(kk) ?? hash.set(kk, []).get(kk)).push(k); });
-for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-  const x = x0 + i * cell, y = y0 + j * cell, cx = Math.floor(x / HB), cy = Math.floor(y / HB);
-  let best = Infinity, bk = -1;
-  for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const k of hash.get(`${cx + a}_${cy + b}`) ?? []) { const d = Math.hypot(route.x[k] - x, route.y[k] - y); if (d < best) { best = d; bk = k; } }
-  if (bk < 0 || best > BLEND) continue;
-  const target = route.h[bk] - 0.6, o = grid[j * nx + i], t = best <= FLAT ? 0 : (best - FLAT) / (BLEND - FLAT), s = t * t * (3 - 2 * t);
-  grid[j * nx + i] = target + (o - target) * s;
+// ---------- Höhen der abzweigenden Straßen: DGM1, an der Einmündung auf Höhe der Strecke ----------
+const HB = 60, routeHash = new Map();
+route.x.forEach((x, k) => { const kk = `${Math.floor(x / HB)}_${Math.floor(route.y[k] / HB)}`; (routeHash.get(kk) ?? routeHash.set(kk, []).get(kk)).push(k); });
+const nearestRoute = (x, y) => {
+  let best = Infinity, bk = -1; const cx = Math.floor(x / HB), cy = Math.floor(y / HB);
+  for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const k of routeHash.get(`${cx + a}_${cy + b}`) ?? []) { const d = Math.hypot(route.x[k] - x, route.y[k] - y); if (d < best) { best = d; bk = k; } }
+  return [bk, best];
+};
+for (const r of sideRoads) {
+  const med = r.dgm.map((_, i) => { const w = []; for (let j = Math.max(0, i - 3); j <= Math.min(r.dgm.length - 1, i + 3); j++) if (!isNaN(r.dgm[j])) w.push(r.dgm[j]); w.sort((p, q) => p - q); return w.length ? w[w.length >> 1] : NaN; });
+  let h = smooth(med, 2);
+  h = h.map((v, i) => {
+    const [bk, d] = nearestRoute(...r.pts[i]);
+    if (bk < 0 || d > 30) return v;
+    const t = Math.min(1, Math.max(0, (d - 4) / 26)), s = t * t * (3 - 2 * t);
+    return isNaN(v) ? route.h[bk] : route.h[bk] + (v - route.h[bk]) * s;
+  });
+  r.h = h.map(v => isNaN(v) ? 0 : Math.round(v * 10) / 10);
 }
+
+// ---------- Straßen ins Gelände einschneiden ----------
+// Alle Fahrbahnen (Strecke + Abzweige) als Punkte mit halber Breite. Gelände, das höher als die Fahrbahn liegt,
+// wird breit abgesenkt (es darf die Straße nirgends überragen); tieferes Gelände nur nah an der Kante angehoben
+// (den Rest verdeckt die Böschung im Client).
+const radweg = route.surface ?? [];
+const roadPts = [];
+route.x.forEach((x, k) => { const d = k * route.step; const rw = radweg.some(s => d >= s.from && d <= s.to); roadPts.push([x, route.y[k], route.h[k], rw ? 1.7 : 2.8]); });
+for (const r of sideRoads) r.pts.forEach(([x, y], k) => roadPts.push([x, y, r.h[k], r.w[k] / 2]));
+const ptHash = new Map();
+roadPts.forEach((p, k) => { const kk = `${Math.floor(p[0] / HB)}_${Math.floor(p[1] / HB)}`; (ptHash.get(kk) ?? ptHash.set(kk, []).get(kk)).push(k); });
+const LOW_FULL = cell * 1.2, LOW_END = cell * 3.5, RAISE_FULL = cell * 0.4, RAISE_END = cell * 2;
+for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+  const x = x0 + i * cell, y = y0 + j * cell, cx = Math.floor(x / HB), cy = Math.floor(y / HB), o = grid[j * nx + i];
+  let lowest = Infinity, raiseTo = -Infinity;
+  for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const k of ptHash.get(`${cx + a}_${cy + b}`) ?? []) {
+    const [px, py, ph, hw] = roadPts[k], e = Math.max(0, Math.hypot(px - x, py - y) - hw), target = ph - 0.5;
+    if (e < LOW_END && o > target) { const t = e <= LOW_FULL ? 0 : (e - LOW_FULL) / (LOW_END - LOW_FULL), s = t * t * (3 - 2 * t); lowest = Math.min(lowest, target + (o - target) * s); }
+    if (e < RAISE_END && o < target) { const t = e <= RAISE_FULL ? 0 : (e - RAISE_FULL) / (RAISE_END - RAISE_FULL), s = t * t * (3 - 2 * t); raiseTo = Math.max(raiseTo, target + (o - target) * s); }
+  }
+  if (lowest < Infinity) grid[j * nx + i] = lowest;
+  else if (raiseTo > -Infinity) grid[j * nx + i] = raiseTo;
+}
+// Abzweige mit Höhen speichern
+fs.writeFileSync(path.join(dir, 'roads.json'), JSON.stringify({ roads: sideRoads.map(r => ({ w: r.w.map(v => Math.round(v * 10) / 10), p: r.pts.map(([x, y], k) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10, r.h[k]]) })) }));
 fs.writeFileSync(path.join(dir, 'terrain.bin'), Buffer.from(Int16Array.from(grid, h => Math.round(h * 10)).buffer));
 fs.writeFileSync(path.join(dir, 'canopy.bin'), Buffer.from(canopy.buffer));
 

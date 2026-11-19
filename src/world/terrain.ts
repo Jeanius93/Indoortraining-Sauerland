@@ -58,55 +58,100 @@ export function buildTerrain(hf: Heightfield, routeDist: (x: number, y: number) 
   return mesh;
 }
 
-function roadTexture() {
-  const cv = document.createElement('canvas'); cv.width = 128; cv.height = 512;
+type Surface = 'strasse' | 'radweg' | 'neben';
+
+/** Belag als Canvas-Textur: Asphalt mit Körnung, je nach Art mit Markierungen */
+function surfaceTexture(kind: Surface) {
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 1024;
   const g = cv.getContext('2d')!;
-  g.fillStyle = '#4a4b4e'; g.fillRect(0, 0, 128, 512);
-  const r = rng(7);
-  for (let i = 0; i < 5000; i++) { const v = 55 + r() * 40; g.fillStyle = `rgb(${v},${v},${v + 3})`; g.fillRect(r() * 128, r() * 512, 1.5, 1.5); }
-  g.fillStyle = '#e8e6df'; g.fillRect(4, 0, 4, 512); g.fillRect(120, 0, 4, 512); // Randlinien
-  g.fillRect(62, 0, 4, 300);                                                      // Mittellinie gestrichelt
+  const base = kind === 'radweg' ? [112, 82, 76] : kind === 'neben' ? [88, 89, 92] : [74, 75, 79];
+  g.fillStyle = `rgb(${base})`; g.fillRect(0, 0, 256, 1024);
+  const r = rng(kind.length * 7);
+  // Körnung + Flicken + Fahrspuren (leicht dunkler)
+  for (let i = 0; i < 26000; i++) { const v = (r() - 0.5) * 34; g.fillStyle = `rgba(${base.map(c => Math.max(0, Math.min(255, c + v))).join(',')},0.9)`; g.fillRect(r() * 256, r() * 1024, 1 + r() * 1.5, 1 + r() * 1.5); }
+  for (let i = 0; i < 6; i++) { g.fillStyle = `rgba(0,0,0,${0.04 + r() * 0.05})`; g.fillRect(r() * 200, r() * 1000, 30 + r() * 60, 40 + r() * 140); }
+  if (kind !== 'radweg') { g.fillStyle = 'rgba(0,0,0,0.07)'; g.fillRect(50, 0, 34, 1024); g.fillRect(172, 0, 34, 1024); }
+  if (kind === 'strasse') {
+    g.fillStyle = '#e9e7e1'; g.fillRect(8, 0, 7, 1024); g.fillRect(241, 0, 7, 1024);   // Randlinien
+    g.fillRect(125, 0, 6, 384);                                                       // Leitlinie (6 m Strich, 12 m Lücke)
+  }
+  if (kind === 'radweg') {                                                            // feine weiße Randmarkierung, Fahrrad-Piktogramm
+    g.fillStyle = 'rgba(235,235,230,0.85)'; g.fillRect(6, 0, 4, 1024); g.fillRect(246, 0, 4, 1024);
+    g.strokeStyle = 'rgba(240,240,236,0.9)'; g.lineWidth = 5;
+    const bike = (y: number) => { g.beginPath(); g.arc(98, y, 22, 0, Math.PI * 2); g.arc(158, y, 22, 0, Math.PI * 2); g.moveTo(98, y); g.lineTo(122, y - 30); g.lineTo(158, y); g.moveTo(122, y - 30); g.lineTo(150, y - 30); g.stroke(); };
+    bike(520);
+  }
   const t = new THREE.CanvasTexture(cv);
   t.wrapS = THREE.ClampToEdgeWrapping; t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
 
-export function buildRoad(route: Route, width = 5.6) {
-  const { x, y, h, step } = route.data, n = x.length;
-  const pos = new Float32Array(n * 6), uv = new Float32Array(n * 4);
+interface RibbonPt { x: number; y: number; h: number; hw: number }
+
+/** Fahrbahnband mit Böschung; v-Koordinate entlang der Strecke (texRepeat Meter je Texturhöhe) */
+function ribbon(pts: RibbonPt[], mat: THREE.Material, skirtMat: THREE.Material, lift: number, texRepeat: number, skirtOut = 5, skirtDown = 5) {
+  const n = pts.length, pos = new Float32Array(n * 6), uv = new Float32Array(n * 4), sp = new Float32Array(n * 12);
+  let along = 0;
   for (let k = 0; k < n; k++) {
-    const a = Math.max(0, k - 2), b = Math.min(n - 1, k + 2);
-    let dx = x[b] - x[a], dy = y[b] - y[a]; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
-    const px = -dy * width / 2, py = dx * width / 2, hh = h[k] + 0.12;
-    pos.set([x[k] + px, hh, -(y[k] + py), x[k] - px, hh, -(y[k] - py)], k * 6);
-    const v = k * step / 24;
-    uv.set([0, v, 1, v], k * 4);
-  }
-  const idx: number[] = [];
-  for (let k = 0; k < n - 1; k++) { const a = k * 2; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  g.setIndex(idx); g.computeVertexNormals();
-  // Böschung: von der Fahrbahnkante 4 m nach außen und 3 m nach unten – verdeckt Spalten zum gröberen Gelände
-  const sp = new Float32Array(n * 12), sidx: number[] = [];
-  for (let k = 0; k < n; k++) {
-    const a = Math.max(0, k - 2), b = Math.min(n - 1, k + 2);
-    let dx = x[b] - x[a], dy = y[b] - y[a]; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
-    const hh = h[k] + 0.1;
+    const a = pts[Math.max(0, k - 2)], b = pts[Math.min(n - 1, k + 2)], p = pts[k];
+    let dx = b.x - a.x, dy = b.y - a.y; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+    if (k) along += Math.hypot(p.x - pts[k - 1].x, p.y - pts[k - 1].y);
+    const hh = p.h + lift, ex = -dy, ey = dx;
+    pos.set([p.x + ex * p.hw, hh, -(p.y + ey * p.hw), p.x - ex * p.hw, hh, -(p.y - ey * p.hw)], k * 6);
+    uv.set([0, along / texRepeat, 1, along / texRepeat], k * 4);
     for (const [side, off] of [[1, 0], [-1, 6]] as const) {
-      const ex = -dy * side, ey = dx * side;
-      sp.set([x[k] + ex * width / 2, hh, -(y[k] + ey * width / 2), x[k] + ex * (width / 2 + 4), hh - 3, -(y[k] + ey * (width / 2 + 4))], k * 12 + off);
+      const sx = ex * side, sy = ey * side;
+      sp.set([p.x + sx * p.hw, hh - 0.02, -(p.y + sy * p.hw), p.x + sx * (p.hw + skirtOut), hh - skirtDown, -(p.y + sy * (p.hw + skirtOut))], k * 12 + off);
     }
   }
-  for (let k = 0; k < n - 1; k++) for (const off of [0, 2]) { const a = k * 4 + off; sidx.push(a, a + 4, a + 1, a + 1, a + 4, a + 5); }
+  const idx: number[] = [], sidx: number[] = [];
+  for (let k = 0; k < n - 1; k++) {
+    const a = k * 2; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+    for (const off of [0, 2]) { const c = k * 4 + off; sidx.push(c, c + 4, c + 1, c + 1, c + 4, c + 5); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setIndex(idx); g.computeVertexNormals();
   const sg = new THREE.BufferGeometry();
   sg.setAttribute('position', new THREE.BufferAttribute(sp, 3)); sg.setIndex(sidx); sg.computeVertexNormals();
-  const skirt = new THREE.Mesh(sg, new THREE.MeshLambertMaterial({ color: '#7f9458', side: THREE.DoubleSide }));
-  skirt.receiveShadow = true;
-  const m = new THREE.MeshLambertMaterial({ map: roadTexture(), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide });
-  const mesh = new THREE.Mesh(g, m); mesh.receiveShadow = true;
-  const group = new THREE.Group(); group.add(mesh, skirt);
+  const road = new THREE.Mesh(g, mat), skirt = new THREE.Mesh(sg, skirtMat);
+  road.receiveShadow = true; skirt.receiveShadow = true;
+  return [road, skirt];
+}
+
+const roadMat = (kind: Surface, offset: number) => {
+  const map = surfaceTexture(kind); map.colorSpace = THREE.NoColorSpace;
+  const m = new THREE.MeshStandardMaterial({ map, roughness: 0.92, metalness: 0, polygonOffset: true, polygonOffsetFactor: offset, polygonOffsetUnits: offset, side: THREE.DoubleSide });
+  m.onBeforeCompile = sh => { sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', '#include <map_fragment>\ndiffuseColor.rgb = pow(diffuseColor.rgb, vec3(2.2));'); };
+  return m;
+};
+const skirtMaterial = () => new THREE.MeshLambertMaterial({ color: '#6f8350', side: THREE.DoubleSide });
+
+/** Hauptstrecke: Straße (5,6 m, Markierung) bzw. Radweg (3,4 m, roter Belag) je Abschnitt */
+export function buildRoad(route: Route) {
+  const { x, y, h, step } = route.data, n = x.length, surf = route.data.surface ?? [];
+  const isRad = (k: number) => surf.some(s => k * step >= s.from && k * step <= s.to);
+  const group = new THREE.Group(), skirtMat = skirtMaterial();
+  const mats = { strasse: roadMat('strasse', -3), radweg: roadMat('radweg', -3) };
+  let k = 0;
+  while (k < n - 1) {
+    const rad = isRad(k); let e = k;
+    while (e < n - 1 && isRad(e + 1) === rad) e++;
+    const pts: RibbonPt[] = [];
+    for (let i = Math.max(0, k - 1); i <= Math.min(n - 1, e + 1); i++) pts.push({ x: x[i], y: y[i], h: h[i], hw: rad ? 1.7 : 2.8 });
+    group.add(...ribbon(pts, rad ? mats.radweg : mats.strasse, skirtMat, 0.12, rad ? 26 : 24));
+    k = e + 1;
+  }
+  return group;
+}
+
+/** Abzweigende Straßen (ohne Markierung), etwas tiefer als die Hauptstrecke, damit diese an Einmündungen oben liegt */
+export function buildSideRoads(roads: { w: number[]; p: number[][] }[]) {
+  const group = new THREE.Group(), mat = roadMat('neben', -1), skirtMat = skirtMaterial();
+  for (const r of roads) {
+    if (r.p.length < 2) continue;
+    group.add(...ribbon(r.p.map((p, i) => ({ x: p[0], y: p[1], h: p[2], hw: r.w[i] / 2 })), mat, skirtMat, 0.06, 24, 3, 3));
+  }
   return group;
 }
 
@@ -213,6 +258,7 @@ export class TreeField {
         if (!list.length) return;
         for (const [g, target] of [[gn, near], [gf, far]] as const) {
           const im = new THREE.InstancedMesh(g, mat, list.length), c = new THREE.Color();
+          im.castShadow = quality === 'high' && target === near;
           list.forEach((mm, i) => { im.setMatrixAt(i, mm); c.setScalar(tint[i]); im.setColorAt(i, c); });
           im.computeBoundingSphere(); target.add(im);
         }
@@ -234,20 +280,26 @@ export class TreeField {
 }
 
 function treeGeometries() {
-  // Höhe 1 = Baumhöhe. Nah: Stamm + zwei Kegel bzw. Krone; fern: ein Körper ohne Stamm
-  const trunk = new THREE.CylinderGeometry(0.018, 0.028, 0.3, 4, 1, true).translate(0, 0.15, 0);
+  // Höhe 1 = Baumhöhe. Nah: Stamm + gestufte, unten dunklere Krone; fern: ein Körper ohne Stamm
+  const trunk = new THREE.CylinderGeometry(0.014, 0.026, 0.32, 5, 1, true).translate(0, 0.16, 0);
+  const tiers = (n: number) => Array.from({ length: n }, (_, i) => {
+    const t = i / (n - 1), r = 0.2 * (1 - t * 0.72), hgt = 0.34 - t * 0.08, y = 0.24 + t * 0.6;
+    const c = new THREE.Color('#203d26').lerp(new THREE.Color('#3b6340'), t);
+    return [new THREE.ConeGeometry(r, hgt, 8, 1, true).translate(0, y + hgt / 2, 0), '#' + c.getHexString()] as [THREE.BufferGeometry, string];
+  });
+  const blob = (x: number, y: number, z: number, r: number, col: string) => {
+    const g = new THREE.IcosahedronGeometry(r, 1); const pos = g.attributes.position, rr = rng(Math.round((x + y + z) * 1000));
+    for (let i = 0; i < pos.count; i++) { const f = 0.85 + rr() * 0.3; pos.setXYZ(i, pos.getX(i) * f, pos.getY(i) * f, pos.getZ(i) * f); }
+    return [g.translate(x, y, z), col] as [THREE.BufferGeometry, string];
+  };
   return {
-    spruceNear: mergeColored([
-      [trunk, '#4d3a2a'],
-      [new THREE.ConeGeometry(0.2, 0.55, 7, 1, true).translate(0, 0.42, 0), '#2c4a2e'],
-      [new THREE.ConeGeometry(0.15, 0.45, 7, 1, true).translate(0, 0.75, 0), '#33553a'],
-    ]),
-    spruceFar: mergeColored([[new THREE.ConeGeometry(0.19, 0.85, 5, 1, true).translate(0, 0.575, 0), '#2e4e31']]),
+    spruceNear: mergeColored([[trunk, '#4a3727'], ...tiers(4)]),
+    spruceFar: mergeColored([[new THREE.ConeGeometry(0.19, 0.85, 6, 1, true).translate(0, 0.575, 0), '#2a4a2f']]),
     leafNear: mergeColored([
-      [trunk, '#56432f'],
-      [new THREE.IcosahedronGeometry(0.3, 0).scale(1, 1.15 * 1.6, 1).translate(0, 0.62, 0), '#557a35'],
+      [trunk, '#5a4632'],
+      blob(0, 0.6, 0, 0.24, '#4c7232'), blob(0.11, 0.72, 0.05, 0.19, '#5a823a'), blob(-0.1, 0.7, -0.06, 0.2, '#466c2f'), blob(0.02, 0.85, -0.02, 0.17, '#638c40'),
     ]),
-    leafFar: mergeColored([[new THREE.OctahedronGeometry(0.3, 0).scale(1, 1.6, 1).translate(0, 0.62, 0), '#527633']]),
+    leafFar: mergeColored([[new THREE.IcosahedronGeometry(0.3, 0).scale(1, 1.4, 1).translate(0, 0.64, 0), '#4f7533']]),
   };
 }
 
@@ -280,7 +332,7 @@ export class BuildingField {
       const key = `${Math.floor(cx / C)}_${Math.floor(cy / C)}`;
       (byChunk.get(key) ?? byChunk.set(key, []).get(key)!).push(t);
     }
-    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    const mat = buildingMaterial();
     for (const [key, tris] of byChunk) {
       const pos = new Float32Array(tris.length * 9), col = new Float32Array(tris.length * 9);
       tris.forEach((t, k) => {
@@ -295,7 +347,7 @@ export class BuildingField {
       g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       g.setAttribute('color', new THREE.BufferAttribute(col, 3));
       g.computeVertexNormals();
-      const mesh = new THREE.Mesh(g, mat); mesh.receiveShadow = true;
+      const mesh = new THREE.Mesh(g, mat); mesh.receiveShadow = true; mesh.castShadow = true;
       const [ci, cj] = key.split('_').map(Number);
       this.chunks.push({ center: new THREE.Vector3((ci + 0.5) * C, 0, -(cj + 0.5) * C), mesh });
       this.group.add(mesh);
@@ -307,7 +359,42 @@ export class BuildingField {
   }
 }
 
-// ---------- Gelände mit Nutzungskarte (ALKIS) ----------
+// ---------- Gelände mit Nutzungskarte (ALKIS) bzw. Luftbild (DOP) ----------
+export const SUN = new THREE.Vector3(-300, 500, 200).normalize();
+
+let detailTex: THREE.Texture | null = null;
+/** Feine, kachelbare Struktur (Gras/Körnung), damit das 2-m-Luftbild aus der Nähe nicht verwaschen wirkt */
+function detailTexture() {
+  if (detailTex) return detailTex;
+  const N = 256, cv = document.createElement('canvas'); cv.width = cv.height = N;
+  const g = cv.getContext('2d')!, img = g.createImageData(N, N), r = rng(11);
+  const v = new Float32Array(N * N);
+  for (let i = 0; i < N * N; i++) v[i] = r();
+  for (let pass = 0; pass < 2; pass++) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {  // leicht weichzeichnen (kachelbar)
+    const i = y * N + x; v[i] = (v[i] * 2 + v[y * N + (x + 1) % N] + v[((y + 1) % N) * N + x]) / 4;
+  }
+  for (let i = 0; i < N * N; i++) { const c = Math.round(Math.min(1, Math.max(0, (v[i] - 0.5) * 2.2 + 0.5)) * 255); img.data.set([c, c, c, 255], i * 4); }
+  g.putImageData(img, 0, 0);
+  detailTex = new THREE.CanvasTexture(cv);
+  detailTex.wrapS = detailTex.wrapT = THREE.RepeatWrapping; detailTex.anisotropy = 8;
+  return detailTex;
+}
+function photoMaterial(map: THREE.Texture) {
+  const m = new THREE.MeshBasicMaterial({ map, vertexColors: true });
+  m.toneMapped = false;
+  m.onBeforeCompile = sh => {
+    sh.uniforms.detailMap = { value: detailTexture() };
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWP = (modelMatrix * vec4(position, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP; uniform sampler2D detailMap;')
+      .replace('#include <map_fragment>', `#include <map_fragment>
+        diffuseColor.rgb = pow(diffuseColor.rgb, vec3(2.2));
+        float dd = length(vWP - cameraPosition);
+        float det = texture2D(detailMap, vWP.xz / 3.0).r * 0.6 + texture2D(detailMap, vWP.xz / 11.0).r * 0.4;
+        diffuseColor.rgb *= mix(0.80 + 0.40 * det, 1.0, smoothstep(40.0, 160.0, dd));`);
+  };
+  return m;
+}
 // Farben je Nutzungsklasse (Sommer). Acker: je Feld wechselnde Kultur + Bewirtschaftungsstreifen.
 const LU_COLORS: Record<number, string> = {
   0: '#86a556', 1: '#8fb35b', 2: '#c2ad66', 3: '#45602f', 4: '#33492b', 5: '#3e5631', 6: '#a3a68a', 7: '#9b9993',
@@ -315,7 +402,7 @@ const LU_COLORS: Record<number, string> = {
 };
 const CROPS = ['#c9b15f', '#8a6c4b', '#9fc05e', '#b9b46a', '#d1bf78'].map(c => new THREE.Color(c));
 
-export function buildLanduseTerrain(hf: Heightfield, lu: Uint8Array, info: { px: number; w: number; h: number }, routeDist: (x: number, y: number) => number, quality: 'low' | 'high', raw?: Int16Array) {
+export function buildLanduseTerrain(hf: Heightfield, lu: Uint8Array, info: { px: number; w: number; h: number }, routeDist: (x: number, y: number) => number, quality: 'low' | 'high', raw?: Int16Array, ortho?: Map<string, ImageData>) {
   const { x0, y0, cell, nx, ny } = hf.t;
   const group = new THREE.Group();
   const CH = Math.round(1000 / cell); // Zellen je Kachel (1 km)
@@ -334,10 +421,22 @@ export function buildLanduseTerrain(hf: Heightfield, lu: Uint8Array, info: { px:
     const ci1 = Math.min(ci + CH, nx - 1), cj1 = Math.min(cj + CH, ny - 1);
     const ni = Math.floor((ci1 - ci) / stride) + 1, nj = Math.floor((cj1 - cj) / stride) + 1;
     const cx0 = x0 + ci * cell, cy0 = y0 + cj * cell, wM = (ni - 1) * cell * stride, hM = (nj - 1) * cell * stride;
+    // Luftbild (falls vorhanden), sonst Textur aus der Nutzungskarte
+    const photo = ortho?.get(`${ci}_${cj}`);
+    let t: THREE.Texture, texW: number, texH: number;
+    if (photo) {
+      const mppPhoto = Math.round(((ci1 - ci) * cell) / photo.width) || 2;
+      texW = photo.width * mppPhoto; texH = photo.height * mppPhoto;
+      t = new THREE.DataTexture(new Uint8Array(photo.data.buffer), photo.width, photo.height, THREE.RGBAFormat);
+      // sRGB → linear im Shader (unabhängig von der GPU-Unterstützung)
+      t.flipY = false; t.colorSpace = THREE.NoColorSpace; t.anisotropy = 8; t.magFilter = THREE.LinearFilter; t.needsUpdate = true;
+      t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true;
+    } else {
     // Texturauflösung: nahe der Strecke 2 m, sonst 4 m (Handy überall 4 m)
     const near = routeDist(cx0 + wM / 2, cy0 + hM / 2) < 900;
     const mpp = quality === 'high' && near ? 2 : 4;
     const tw = Math.ceil(wM / mpp), th = Math.ceil(hM / mpp);
+    texW = tw * mpp; texH = th * mpp;
     const tex = new Uint8Array(tw * th * 4), c = new THREE.Color();
     for (let ty = 0; ty < th; ty++) for (let tx = 0; tx < tw; tx++) {
       const x = cx0 + (tx + 0.5) * mpp, y = cy0 + (ty + 0.5) * mpp;
@@ -361,18 +460,19 @@ export function buildLanduseTerrain(hf: Heightfield, lu: Uint8Array, info: { px:
       const o = (ty * tw + tx) * 4;
       tex[o] = Math.min(255, c.r * 255); tex[o + 1] = Math.min(255, c.g * 255); tex[o + 2] = Math.min(255, c.b * 255); tex[o + 3] = 255;
     }
-    const t = new THREE.DataTexture(tex, tw, th, THREE.RGBAFormat);
+    t = new THREE.DataTexture(tex, tw, th, THREE.RGBAFormat);
     t.colorSpace = THREE.LinearSRGBColorSpace; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter;
     t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true;
+    }
 
     // Geometrie der Kachel; Vertexfarbe = Felsen an steilen Hängen
     const pos = new Float32Array(ni * nj * 3), uv = new Float32Array(ni * nj * 2), col = new Float32Array(ni * nj * 3), nor = new Float32Array(ni * nj * 3);
     const rh = (i: number, j: number) => { i = Math.max(0, Math.min(nx - 1, i)); j = Math.max(0, Math.min(ny - 1, j)); return raw ? raw[j * nx + i] * hf.t.scale : hf.raw(i, j); };
-    const rock = new THREE.Color('#8a8475'), white = new THREE.Color(1, 1, 1);
+    const rock = new THREE.Color('#8a8475'), white = new THREE.Color(1, 1, 1), c = new THREE.Color();
     for (let j = 0; j < nj; j++) for (let i = 0; i < ni; i++) {
       const gi = ci + i * stride, gj = cj + j * stride, k = j * ni + i, x = x0 + gi * cell, y = y0 + gj * cell;
       pos[k * 3] = x; pos[k * 3 + 1] = hf.raw(gi, gj); pos[k * 3 + 2] = -y;
-      uv[k * 2] = (i * cell * stride) / (tw * mpp); uv[k * 2 + 1] = (j * cell * stride) / (th * mpp);
+      uv[k * 2] = (i * cell * stride) / texW; uv[k * 2 + 1] = (j * cell * stride) / texH;
       // Normale aus dem glatten Gelände (ohne Straßeneinschnitt)
       const hx = rh(gi + stride, gj) - rh(gi - stride, gj), hy = rh(gi, gj + stride) - rh(gi, gj - stride), span = 2 * cell * stride;
       const slope = Math.hypot(hx, hy) / span;
@@ -391,9 +491,52 @@ export function buildLanduseTerrain(hf: Heightfield, lu: Uint8Array, info: { px:
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
     g.setIndex(idx);
-    const mesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: t, vertexColors: true }));
-    mesh.receiveShadow = true;
+    let mesh: THREE.Mesh;
+    if (photo) {
+      // Luftbild enthält bereits Licht und Schatten → unbeleuchtet, nur Hangschattierung (Vertexfarbe) + Detailstruktur
+      const shade = g.attributes.color as THREE.BufferAttribute;
+      for (let k = 0; k < shade.count; k++) {
+        const d = Math.max(0, nor[k * 3] * SUN.x + nor[k * 3 + 1] * SUN.y + nor[k * 3 + 2] * SUN.z);
+        const v = (0.66 + 0.42 * d) * shade.getX(k);
+        shade.setXYZ(k, v, v, v);
+      }
+      mesh = new THREE.Mesh(g, photoMaterial(t));
+    } else {
+      mesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: t, vertexColors: true }));
+      mesh.receiveShadow = true;
+    }
     group.add(mesh);
   }
   return group;
+}
+
+/** Gebäudematerial: Fenster (Stockwerke à 2,9 m, Achsen à 3,1 m) und Dachdeckung per Shader – blendet mit der Entfernung aus */
+function buildingMaterial() {
+  const m = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+  m.onBeforeCompile = sh => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying vec3 vWNor;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(position, 1.0)).xyz; vWNor = normalize(mat3(modelMatrix) * normal);');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying vec3 vWNor;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        vec3 bn = normalize(vWNor);
+        float fade = 1.0 - smoothstep(120.0, 380.0, length(vWPos - cameraPosition));
+        if (abs(bn.y) < 0.3) {
+          vec2 tg = normalize(vec2(-bn.z, bn.x));
+          float u = dot(vWPos.xz, tg) / 3.1, v = (vWPos.y + 0.7) / 2.9;
+          float fu = fract(u), fv = fract(v);
+          float win = step(0.30, fu) * step(fu, 0.70) * step(0.30, fv) * step(fv, 0.80);
+          float frame = step(0.27, fu) * step(fu, 0.73) * step(0.27, fv) * step(fv, 0.83) - win;
+          float rnd = fract(sin(dot(floor(vec2(u, v)), vec2(12.9898, 78.233))) * 43758.5453);
+          vec3 glass = mix(vec3(0.10, 0.13, 0.17), vec3(0.42, 0.50, 0.58), rnd * rnd);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.93, 0.92, 0.89), frame * 0.85 * fade);
+          diffuseColor.rgb = mix(diffuseColor.rgb, glass, win * fade);
+          diffuseColor.rgb *= 0.9 + 0.1 * smoothstep(0.0, 0.5, fv);
+        } else if (bn.y > 0.3) {
+          float rows = fract(vWPos.y * 3.0 / max(0.35, 1.0 - bn.y));
+          diffuseColor.rgb *= 1.0 - (0.13 * (1.0 - smoothstep(0.0, 0.18, rows))) * fade;
+        }`);
+  };
+  return m;
 }

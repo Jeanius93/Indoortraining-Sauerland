@@ -11,7 +11,9 @@ const title = head.match(/<title>[\s\S]*?<\/title>/)[0];
 fs.writeFileSync(`${dir}/sauerland-indoor.html`, `${title}\n${head.replace(title, '')}\n${body}`);
 for (const r of fs.readdirSync('public/routes')) {
   fs.mkdirSync(`${dir}/routes/${r}`, { recursive: true });
-  fs.copyFileSync(`public/routes/${r}/route.json`, `${dir}/routes/${r}/route.json`);
+  for (const f of fs.readdirSync(`public/routes/${r}`).filter(f => f.endsWith('.json')))
+    fs.copyFileSync(`public/routes/${r}/${f}`, `${dir}/routes/${r}/${f}`);
+  if (fs.existsSync(`public/routes/${r}/ortho`)) fs.cpSync(`public/routes/${r}/ortho`, `${dir}/routes/${r}/ortho`, { recursive: true });
   for (const f of fs.readdirSync(`public/routes/${r}`).filter(f => /\.(bin|gz)$/.test(f)))
     fs.writeFileSync(`${dir}/routes/${r}/${f.replace(/\.bin$/, '')}.json`, JSON.stringify({ b64: fs.readFileSync(`public/routes/${r}/${f}`).toString('base64') }));
 }

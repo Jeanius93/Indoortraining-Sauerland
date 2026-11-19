@@ -40,8 +40,15 @@ npm run build        # Produktions-Build nach dist/
 4. Nutzungskarte (Felder, Wiesen, Wald, Straßen, Wege, Gewässer) und Ortsnamen aus ALKIS
    (GeoPackage „Grundrissdaten vereinfacht“ der betroffenen Kreise von opengeodata.nrw.de):
    `python3 scripts/prepare-landuse.py public/routes/meinestrecke pfad/zu/*.gpkg`
-5. Echte Welt aus amtlichen Geodaten NRW (Häuser, Bäume, genaues Gelände):
+5. Abzweigende Straßen und Radweg-Abschnitte (aus der Nutzungskarte):
+   `python3 scripts/prepare-roads.py public/routes/meinestrecke`
+6. Echte Welt aus amtlichen Geodaten NRW (Häuser, Bäume, genaues Gelände):
    `NODE_USE_ENV_PROXY=1 node scripts/prepare-world.mjs public/routes/meinestrecke`
+
+7. Luftbilder als Bodentextur:
+   `python3 scripts/fetch-dop.py public/routes/meinestrecke && python3 scripts/prepare-ortho.py public/routes/meinestrecke`
+
+Benötigte Python-Pakete: `numpy pillow scipy scikit-image`
 
 ### Datenquellen
 
@@ -51,6 +58,7 @@ npm run build        # Produktions-Build nach dist/
 | 3D-Gebäudemodell LoD2 | Geobasis NRW | Häuser mit echten Dachformen, Farbe nach Gebäudeart |
 | nDOM 50 cm – Höhe über Grund | Geobasis NRW | einzelne Bäume (Position, Höhe, Krone, Laub/Nadel) und Waldflächen |
 | ALKIS Grundrissdaten (vereinfacht) | Geobasis NRW | Nutzung: Acker, Grünland, Wald, Siedlung, Straßen, Wege, Gewässer; Straßen- und Gemarkungsnamen für die Ortsauswahl |
+| DOP – Digitale Orthophotos | Geobasis NRW | Bodentextur (2 m nahe der Strecke, sonst 4 m) |
 | Terrain Tiles | Mapzen / AWS Open Data | Gelände außerhalb von NRW (Rückfall) |
 
 Geobasis-NRW-Daten stehen unter der Datenlizenz Deutschland – Zero – Version 2.0.
