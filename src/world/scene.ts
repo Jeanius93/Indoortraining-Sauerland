@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import type { Route, WorldData } from '../route';
 import { Avatar, type AvatarStyle } from './avatar';
-import { Heightfield, buildBuildings, buildRealTrees, buildRoad, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
+import { BuildingField, Heightfield, TreeField, buildRoad, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
 
 export const cameraModes = ['Verfolger', 'Seite', 'Ego', 'Drohne'] as const;
 export type CameraMode = typeof cameraModes[number];
@@ -20,6 +20,9 @@ export class World {
   private first = true;
   treeCount = 0;
   buildingCount = 0;
+  private trees: TreeField | null = null;
+  private buildings: BuildingField | null = null;
+  private lodTimer = 0;
 
   constructor(canvas: HTMLCanvasElement, private route: Route, heights: Int16Array, data: WorldData, style: AvatarStyle, quality: 'low' | 'high') {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: quality === 'high', powerPreference: 'high-performance' });
@@ -31,7 +34,7 @@ export class World {
     const sky = new THREE.Color('#9cc3e6'), haze = new THREE.Color('#c9d8de');
     this.scene.background = sky;
     this.scene.fog = new THREE.Fog(haze, 300, quality === 'high' ? 4200 : 2600);
-    this.scene.add(new THREE.HemisphereLight('#cfe3ff', '#4a5a35', 1.1));
+    this.scene.add(new THREE.HemisphereLight('#dceaff', '#6b7a55', 1.7));
     this.sun.position.set(-300, 500, 200);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(1024, 1024);
@@ -45,10 +48,18 @@ export class World {
     this.scene.add(buildTerrain(this.hf, dist, data.canopy));
     this.scene.add(buildRoad(route));
     const w = route.data.world;
-    if (data.buildings && w) { this.scene.add(buildBuildings(this.hf, data.buildings, w.buildings)); this.buildingCount = w.buildings.count; }
-    const trees = data.trees ? buildRealTrees(this.hf, data.trees, dist, quality) : buildTrees(this.hf, dist, route, quality);
-    this.treeCount = trees.count;
-    this.scene.add(trees.group);
+    const fogFar = (this.scene.fog as THREE.Fog).far;
+    if (data.buildings && w) {
+      this.buildings = new BuildingField(this.hf, data.buildings, w.buildings, fogFar);
+      this.scene.add(this.buildings.group); this.buildingCount = w.buildings.count;
+    }
+    if (data.trees) {
+      this.trees = new TreeField(this.hf, data.trees, dist, quality, quality === 'high' ? 500 : 300, fogFar);
+      this.scene.add(this.trees.group); this.treeCount = this.trees.count;
+    } else {
+      const trees = buildTrees(this.hf, dist, route, quality);
+      this.treeCount = trees.count; this.scene.add(trees.group);
+    }
 
     this.avatar = new Avatar(style);
     this.scene.add(this.avatar.root);
@@ -106,6 +117,10 @@ export class World {
     this.camera.position.copy(this.camPos);
     this.camera.lookAt(this.camLook);
     this.avatar.root.visible = this.cameraMode !== 'Ego';
+
+    // Detailstufen nachführen (alle 0,4 s)
+    this.lodTimer -= dt;
+    if (this.lodTimer <= 0) { this.lodTimer = 0.4; this.trees?.update(this.camera.position); this.buildings?.update(this.camera.position); }
 
     // Schatten-Kamera folgt dem Avatar
     this.sun.position.copy(a.position).add(new THREE.Vector3(-300, 500, 200));

@@ -82,12 +82,12 @@ const routeUtm = route.x.map((x, k) => localToUtm(x, route.y[k]));
 const grid = new Float32Array(nx * ny).map((_, k) => oldGrid[k] * T.scale);
 const gridFromDgm = new Uint8Array(nx * ny);
 const canopy = new Uint8Array(nx * ny);
-const dgmRoad = new Float32Array(route.x.length).fill(NaN);
+const dgmLat = route.x.map(() => []); // DGM1-Werte quer zur Straße (−6 … +6 m) je Streckenpunkt
 
 // ---------- Gebäude (LoD2) ----------
 const PALETTE = {
-  wallWhite: '#ece8df', wallCream: '#e3d8c0', wallGrey: '#c8c8c2', wallSlate: '#3e434a', wallMetal: '#a6adb2', wallBrick: '#9a5b45', wallWood: '#6d5641',
-  roofSlate: '#33373c', roofDark: '#4a4e53', roofRed: '#87493a', roofTerra: '#a65a3e', roofFlat: '#8b8983', roofMetal: '#7d868b',
+  wallWhite: '#ece8df', wallCream: '#e3d8c0', wallGrey: '#c8c8c2', wallSlate: '#5d646c', wallMetal: '#a6adb2', wallBrick: '#a56650', wallWood: '#7d6650',
+  roofSlate: '#474d54', roofDark: '#5b6066', roofRed: '#87493a', roofTerra: '#a65a3e', roofFlat: '#8b8983', roofMetal: '#7d868b',
 };
 const palNames = Object.keys(PALETTE);
 const hashStr = s => { let h = 2166136261; for (const c of s) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return (h >>> 0) / 4294967296; };
@@ -96,7 +96,7 @@ function styleFor(id, fn, roofType) {
   const r1 = hashStr(id), r2 = hashStr(id + 'r');
   const flat = roofType === '1000';
   if (fn.startsWith('31001_1') || fn.startsWith('31001_3')) // Wohnen / öffentlich
-    return { wall: pick(r1, [['wallWhite', .5], ['wallCream', .2], ['wallSlate', .2], ['wallGrey', .07], ['wallBrick', .03]]), roof: flat ? 'roofFlat' : pick(r2, [['roofSlate', .6], ['roofDark', .17], ['roofRed', .15], ['roofTerra', .08]]) };
+    return { wall: pick(r1, [['wallWhite', .55], ['wallCream', .22], ['wallSlate', .12], ['wallGrey', .08], ['wallBrick', .03]]), roof: flat ? 'roofFlat' : pick(r2, [['roofSlate', .6], ['roofDark', .17], ['roofRed', .15], ['roofTerra', .08]]) };
   if (fn.startsWith('31001_27')) // Land-/Forstwirtschaft
     return { wall: pick(r1, [['wallWood', .45], ['wallCream', .25], ['wallSlate', .15], ['wallGrey', .15]]), roof: flat ? 'roofFlat' : pick(r2, [['roofDark', .5], ['roofRed', .3], ['roofSlate', .2]]) };
   if (fn.startsWith('31001_2')) // Gewerbe / Industrie / Garagen
@@ -257,9 +257,7 @@ function processDgm(t) {
     const [E, N] = routeUtm[k]; if (E < E0 || E >= E0 + 1000 || N > N1 || N <= N1 - 1000) continue;
     const a = routeUtm[Math.max(0, k - 2)], b = routeUtm[Math.min(routeUtm.length - 1, k + 2)];
     let dx = b[0] - a[0], dy = b[1] - a[1]; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
-    let best = NaN, bd = Infinity;
-    for (let o = -6; o <= 6; o += 1.5) { const v = sample(E - dy * o, N + dx * o); if (!isNaN(v) && Math.abs(v - route.h[k]) < bd) { bd = Math.abs(v - route.h[k]); best = v; } }
-    dgmRoad[k] = best;
+    for (let o = -6; o <= 6; o += 1.5) { const v = sample(E - dy * o, N + dx * o); if (!isNaN(v)) dgmLat[k].push(v); }
   }
 }
 
@@ -283,12 +281,30 @@ console.log();
 
 // ---------- Straßenhöhe aus DGM1 ----------
 const smooth = (arr, win) => arr.map((_, i) => { let s = 0, c = 0; for (let j = Math.max(0, i - win); j <= Math.min(arr.length - 1, i + win); j++) if (!isNaN(arr[j])) { s += arr[j]; c++; } return c ? s / c : NaN; });
-const valid = [...dgmRoad].filter(v => !isNaN(v)).length;
-if (valid > route.h.length * 0.9) {
-  // Median-Filter gegen Brücken/Ausreißer, dann glätten
-  const med = [...dgmRoad].map((_, i) => { const w = []; for (let j = Math.max(0, i - 6); j <= Math.min(dgmRoad.length - 1, i + 6); j++) if (!isNaN(dgmRoad[j])) w.push(dgmRoad[j]); w.sort((a, b) => a - b); return w.length ? w[w.length >> 1] : route.h[i]; });
-  route.h = smooth(smooth(med, 5), 5).map((v, i) => Math.round((isNaN(v) ? route.h[i] : v) * 10) / 10);
-}
+// 1) Versatz Aufzeichnung ↔ DGM1 (Median über Mittelwerte quer zur Straße)
+const baro = route.h.slice();
+const centers = dgmLat.map(l => l.length ? l[l.length >> 1] : NaN);
+// Barometer driftet während der Fahrt → Versatz gleitend über ±1 km (Median)
+const rawDiff = centers.map((c, k) => c - baro[k]);
+const W = Math.round(1000 / route.step);
+const offs = baro.map((_, k) => {
+  const w = []; for (let j = Math.max(0, k - W); j <= Math.min(baro.length - 1, k + W); j += 4) if (!isNaN(rawDiff[j])) w.push(rawDiff[j]);
+  w.sort((a, b) => a - b); return w.length ? w[w.length >> 1] : 0;
+});
+const off = [...offs].sort((a, b) => a - b)[offs.length >> 1];
+// 2) Je Punkt den DGM-Wert quer zur Straße, der der verschobenen Aufzeichnung am nächsten liegt.
+//    Weicht auch der um mehr als 2,5 m ab (Brücke – das DGM ist Gelände ohne Bauwerke), gilt die Aufzeichnung.
+let bridges = 0;
+const dgmRoad = dgmLat.map((l, k) => {
+  const ref = baro[k] + offs[k]; let best = NaN, bd = Infinity;
+  for (const v of l) if (Math.abs(v - ref) < bd) { bd = Math.abs(v - ref); best = v; }
+  if (isNaN(best) || bd > 2.5) { bridges++; return ref; }
+  return best;
+});
+console.log(`Versatz Aufzeichnung→DGM1: ${Math.min(...offs).toFixed(1)} … ${Math.max(...offs).toFixed(1)} m (Median ${off.toFixed(1)}) · ${bridges} Punkte (${(bridges * route.step)} m) aus der Aufzeichnung (Brücken/Lücken)`);
+// 3) Median gegen Ausreißer, dann glätten
+const med = dgmRoad.map((_, i) => { const w = []; for (let j = Math.max(0, i - 6); j <= Math.min(dgmRoad.length - 1, i + 6); j++) w.push(dgmRoad[j]); w.sort((a, b) => a - b); return w[w.length >> 1]; });
+route.h = smooth(smooth(med, 6), 6).map(v => Math.round(v * 10) / 10);
 let up = 0, maxG = 0, minG = 0;
 for (let k = 1; k < route.h.length; k++) up += Math.max(0, route.h[k] - route.h[k - 1]);
 for (let k = 4; k < route.h.length; k++) { const g = (route.h[k] - route.h[k - 4]) / (4 * route.step) * 100; maxG = Math.max(maxG, g); minG = Math.min(minG, g); }

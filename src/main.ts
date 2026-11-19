@@ -63,6 +63,7 @@ async function init() {
     ? `${fmt(world.buildingCount)} Häuser und ${fmt(world.treeCount)} Bäume aus amtlichen Geodaten. ${route.data.attribution}`
     : `${route.data.attribution} · Wald nachempfunden (${fmt(world.treeCount)} Bäume)`;
   onResize();
+  dist = startDist();
   $('loading').hidden = true;
   requestAnimationFrame(loop);
 }
@@ -223,7 +224,7 @@ $('btnGo').onclick = async () => {
   if (!trainer) return;
   $('start').hidden = true; $('hud').hidden = false;
   running = true; paused = false;
-  dist = 0; speed = 0; elapsed = 0; lastSampleSec = -1; ergBias = 0; recorder = new Recorder();
+  dist = startDist(); speed = 0; elapsed = 0; lastSampleSec = -1; ergBias = 0; recorder = new Recorder();
   ergTarget = Math.round(settings.ftp * 0.65 / 5) * 5;
   applyMode();
   onResize();
@@ -262,6 +263,12 @@ $('btnFit').onclick = () => {
   } catch (e) { toast(`FIT-Export fehlgeschlagen: ${(e as Error).message}`); }
 };
 $('btnAgain').onclick = () => { $('done').hidden = true; $('start').hidden = false; dist = 0; };
+
+// Startpunkt per Adresse wählbar, z. B. ?km=12.5 (zum Testen einzelner Abschnitte)
+function startDist() {
+  const km = Number(new URLSearchParams(location.search).get('km'));
+  return Number.isFinite(km) && km > 0 ? Math.min(route.length - 100, km * 1000) : 0;
+}
 
 // ---------- Hauptschleife ----------
 let last = performance.now(), lastPhysics = performance.now(), hudTimer = 0;

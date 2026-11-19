@@ -163,44 +163,86 @@ export function makeRouteDistance(route: Route, t: Route['data']['terrain'], cel
   };
 }
 
-/** Bäume aus dem nDOM: x,y (Uint16, 0,25 m), Höhe (Uint8, 0,25 m), Kronenradius (Uint8, 0,1 m), Typ (1 = Nadelbaum) */
-export function buildRealTrees(hf: Heightfield, data: Uint8Array, routeDist: (x: number, y: number) => number, quality: 'low' | 'high') {
-  const { x0, y0 } = hf.t, dv = new DataView(data.buffer, data.byteOffset, data.byteLength), n = data.byteLength / 7;
-  const spruce: THREE.Matrix4[] = [], leaf: THREE.Matrix4[] = [];
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
-  const r = rng(3);
-  for (let i = 0; i < n; i++) {
-    const x = x0 + dv.getUint16(i * 7, true) * 0.25, y = y0 + dv.getUint16(i * 7 + 2, true) * 0.25;
-    const h = dv.getUint8(i * 7 + 4) / 4, crown = dv.getUint8(i * 7 + 5) / 10, conifer = dv.getUint8(i * 7 + 6) === 1;
-    if (quality === 'low' && routeDist(x, y) > 250 && (i & 1)) continue; // Handy: in der Ferne ausdünnen
-    p.set(x, hf.at(x, y) - 0.3, -y);
-    q.setFromAxisAngle(up, r() * Math.PI * 2);
-    const sxz = conifer ? Math.min(crown / 0.2, h * 0.32 / 0.2) : crown / 0.3;
-    s.set(sxz, h, sxz);
-    (conifer ? spruce : leaf).push(m.compose(p, q, s).clone());
+/** Bäume aus dem nDOM: x,y (Uint16, 0,25 m), Höhe (Uint8, 0,25 m), Kronenradius (Uint8, 0,1 m), Typ (1 = Nadelbaum).
+ *  In 1-km-Kacheln aufgeteilt: nah detailliert, fern vereinfacht, hinter dem Dunst ausgeblendet. */
+export class TreeField {
+  readonly group = new THREE.Group();
+  count = 0;
+  private chunks: { center: THREE.Vector3; near: THREE.Object3D; far: THREE.Object3D }[] = [];
+  constructor(hf: Heightfield, data: Uint8Array, routeDist: (x: number, y: number) => number, quality: 'low' | 'high', private nearDist: number, private farDist: number) {
+    const { x0, y0 } = hf.t, dv = new DataView(data.buffer, data.byteOffset, data.byteLength), n = data.byteLength / 7;
+    const C = 1000, buckets = new Map<string, { spruce: THREE.Matrix4[]; leaf: THREE.Matrix4[]; cx: number; cy: number }>();
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+    const r = rng(3);
+    for (let i = 0; i < n; i++) {
+      const x = x0 + dv.getUint16(i * 7, true) * 0.25, y = y0 + dv.getUint16(i * 7 + 2, true) * 0.25;
+      const h = dv.getUint8(i * 7 + 4) / 4, crown = dv.getUint8(i * 7 + 5) / 10, conifer = dv.getUint8(i * 7 + 6) === 1;
+      if (quality === 'low' && routeDist(x, y) > 250 && (i & 1)) continue; // Handy: in der Ferne ausdünnen
+      p.set(x, hf.at(x, y) - 0.3, -y);
+      q.setFromAxisAngle(up, r() * Math.PI * 2);
+      const sxz = conifer ? Math.min(crown / 0.2, h * 0.32 / 0.2) : crown / 0.3;
+      s.set(sxz, h, sxz);
+      const ci = Math.floor(x / C), cj = Math.floor(y / C), key = `${ci}_${cj}`;
+      const b = buckets.get(key) ?? buckets.set(key, { spruce: [], leaf: [], cx: (ci + 0.5) * C, cy: (cj + 0.5) * C }).get(key)!;
+      (conifer ? b.spruce : b.leaf).push(m.compose(p, q, s).clone());
+      this.count++;
+    }
+    const geo = treeGeometries();
+    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+    for (const b of buckets.values()) {
+      const near = new THREE.Group(), far = new THREE.Group();
+      const tints = [b.spruce.map(() => 1 - r() * 0.15), b.leaf.map(() => 1 - r() * 0.3)];
+      ([[geo.spruceNear, geo.spruceFar, b.spruce, tints[0]], [geo.leafNear, geo.leafFar, b.leaf, tints[1]]] as const).forEach(([gn, gf, list, tint]) => {
+        if (!list.length) return;
+        for (const [g, target] of [[gn, near], [gf, far]] as const) {
+          const im = new THREE.InstancedMesh(g, mat, list.length), c = new THREE.Color();
+          list.forEach((mm, i) => { im.setMatrixAt(i, mm); c.setScalar(tint[i]); im.setColorAt(i, c); });
+          im.computeBoundingSphere(); target.add(im);
+        }
+      });
+      const center = new THREE.Vector3(b.cx, hf.at(b.cx, b.cy), -b.cy);
+      near.visible = false; far.visible = false;
+      this.group.add(near, far);
+      this.chunks.push({ center, near, far });
+    }
   }
-  return treeMeshes(spruce, leaf, r);
+  /** Detailstufe je Kachel nach Abstand zur Kamera wählen */
+  update(cam: THREE.Vector3) {
+    for (const c of this.chunks) {
+      const d = Math.hypot(c.center.x - cam.x, c.center.z - cam.z) - 710; // Abstand zum Kachelrand (grob)
+      c.near.visible = d < this.nearDist;
+      c.far.visible = !c.near.visible && d < this.farDist;
+    }
+  }
+}
+
+function treeGeometries() {
+  // Höhe 1 = Baumhöhe. Nah: Stamm + zwei Kegel bzw. Krone; fern: ein Körper ohne Stamm
+  const trunk = new THREE.CylinderGeometry(0.018, 0.028, 0.3, 4, 1, true).translate(0, 0.15, 0);
+  return {
+    spruceNear: mergeColored([
+      [trunk, '#4d3a2a'],
+      [new THREE.ConeGeometry(0.2, 0.55, 7, 1, true).translate(0, 0.42, 0), '#2c4a2e'],
+      [new THREE.ConeGeometry(0.15, 0.45, 7, 1, true).translate(0, 0.75, 0), '#33553a'],
+    ]),
+    spruceFar: mergeColored([[new THREE.ConeGeometry(0.19, 0.85, 5, 1, true).translate(0, 0.575, 0), '#2e4e31']]),
+    leafNear: mergeColored([
+      [trunk, '#56432f'],
+      [new THREE.IcosahedronGeometry(0.3, 0).scale(1, 1.15 * 1.6, 1).translate(0, 0.62, 0), '#557a35'],
+    ]),
+    leafFar: mergeColored([[new THREE.OctahedronGeometry(0.3, 0).scale(1, 1.6, 1).translate(0, 0.62, 0), '#527633']]),
+  };
 }
 
 function treeMeshes(spruce: THREE.Matrix4[], leaf: THREE.Matrix4[], r: () => number) {
-  // Fichte: zwei Kegel + Stamm, Laubbaum: Kugel-Krone + Stamm (Höhe 1 = Baumhöhe)
-  const trunk = new THREE.CylinderGeometry(0.018, 0.028, 0.3, 5).translate(0, 0.15, 0);
-  const spruceGeo = mergeColored([
-    [trunk, '#4d3a2a'],
-    [new THREE.ConeGeometry(0.2, 0.55, 7).translate(0, 0.42, 0), '#2c4a2e'],
-    [new THREE.ConeGeometry(0.15, 0.45, 7).translate(0, 0.75, 0), '#33553a'],
-  ]);
-  const leafGeo = mergeColored([
-    [trunk, '#56432f'],
-    [new THREE.IcosahedronGeometry(0.3, 0).scale(1, 1.15 * 1.6, 1).translate(0, 0.62, 0), '#557a35'],
-  ]);
+  const geo = treeGeometries();
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
   const group = new THREE.Group();
-  for (const [geo, list, tint] of [[spruceGeo, spruce, 0.15], [leafGeo, leaf, 0.3]] as const) {
+  for (const [g, list, tint] of [[geo.spruceNear, spruce, 0.15], [geo.leafNear, leaf, 0.3]] as const) {
     if (!list.length) continue;
-    const im = new THREE.InstancedMesh(geo, mat, list.length);
+    const im = new THREE.InstancedMesh(g, mat, list.length);
     const c = new THREE.Color();
-    list.forEach((mm, i) => { im.setMatrixAt(i, mm); c.setHSL(0, 0, 1 - r() * tint); im.setColorAt(i, c); });
+    list.forEach((mm, i) => { im.setMatrixAt(i, mm); c.setScalar(1 - r() * tint); im.setColorAt(i, c); });
     im.instanceMatrix.needsUpdate = true;
     im.computeBoundingSphere();
     group.add(im);
@@ -208,23 +250,42 @@ function treeMeshes(spruce: THREE.Matrix4[], leaf: THREE.Matrix4[], r: () => num
   return { group, count: spruce.length + leaf.length };
 }
 
-/** Gebäude aus LoD2: Dreiecke (Uint16 x,y in qxy-Schritten ab x0/y0, z in qz-Schritten), Farbe je Dreieck */
-export function buildBuildings(hf: Heightfield, b: { pos: Uint16Array; col: Uint8Array }, info: { qxy: number; qz: number; palette: string[] }) {
-  const { x0, y0 } = hf.t, n = b.pos.length / 3;
-  const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
-  const pal = info.palette.map(c => new THREE.Color(c));
-  for (let v = 0; v < n; v++) {
-    pos[v * 3] = x0 + b.pos[v * 3] * info.qxy;
-    pos[v * 3 + 1] = b.pos[v * 3 + 2] * info.qz;
-    pos[v * 3 + 2] = -(y0 + b.pos[v * 3 + 1] * info.qxy);
-    const c = pal[b.col[Math.floor(v / 3)]] ?? pal[0];
-    col[v * 3] = c.r; col[v * 3 + 1] = c.g; col[v * 3 + 2] = c.b;
+/** Gebäude aus LoD2 in 1-km-Kacheln (Ausblenden hinter dem Dunst) */
+export class BuildingField {
+  readonly group = new THREE.Group();
+  private chunks: { center: THREE.Vector3; mesh: THREE.Mesh }[] = [];
+  constructor(hf: Heightfield, b: { pos: Uint16Array; col: Uint8Array }, info: { qxy: number; qz: number; palette: string[] }, private farDist: number) {
+    const { x0, y0 } = hf.t, nT = b.pos.length / 9, C = 1000;
+    const pal = info.palette.map(c => new THREE.Color(c));
+    const byChunk = new Map<string, number[]>();
+    for (let t = 0; t < nT; t++) {
+      const cx = x0 + (b.pos[t * 9] + b.pos[t * 9 + 3] + b.pos[t * 9 + 6]) / 3 * info.qxy, cy = y0 + (b.pos[t * 9 + 1] + b.pos[t * 9 + 4] + b.pos[t * 9 + 7]) / 3 * info.qxy;
+      const key = `${Math.floor(cx / C)}_${Math.floor(cy / C)}`;
+      (byChunk.get(key) ?? byChunk.set(key, []).get(key)!).push(t);
+    }
+    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    for (const [key, tris] of byChunk) {
+      const pos = new Float32Array(tris.length * 9), col = new Float32Array(tris.length * 9);
+      tris.forEach((t, k) => {
+        const c = pal[b.col[t]] ?? pal[0];
+        for (let v = 0; v < 3; v++) {
+          const src = t * 9 + v * 3, dst = k * 9 + v * 3;
+          pos[dst] = x0 + b.pos[src] * info.qxy; pos[dst + 1] = b.pos[src + 2] * info.qz; pos[dst + 2] = -(y0 + b.pos[src + 1] * info.qxy);
+          col[dst] = c.r; col[dst + 1] = c.g; col[dst + 2] = c.b;
+        }
+      });
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      g.computeVertexNormals();
+      const mesh = new THREE.Mesh(g, mat); mesh.receiveShadow = true;
+      const [ci, cj] = key.split('_').map(Number);
+      this.chunks.push({ center: new THREE.Vector3((ci + 0.5) * C, 0, -(cj + 0.5) * C), mesh });
+      this.group.add(mesh);
+    }
   }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  g.computeVertexNormals();
-  const mesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
-  mesh.receiveShadow = true;
-  return mesh;
+  get count() { return this.chunks.length; }
+  update(cam: THREE.Vector3) {
+    for (const c of this.chunks) c.mesh.visible = Math.hypot(c.center.x - cam.x, c.center.z - cam.z) - 710 < this.farDist;
+  }
 }
