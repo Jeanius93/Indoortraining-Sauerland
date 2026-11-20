@@ -42,7 +42,8 @@ export class World {
 
   constructor(canvas: HTMLCanvasElement, private route: Route, heights: Int16Array, data: WorldData, style: AvatarStyle, quality: 'low' | 'high') {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: quality === 'high', powerPreference: 'high-performance' });
-    this.maxDpr = Math.min(window.devicePixelRatio, quality === 'high' ? 1.5 : 1.25); this.dpr = Math.min(1, this.maxDpr);
+    // volle Bildschirmauflösung (MSI Claw: 1,5); nur bei sehr niedriger Bildrate leicht reduzieren, nie unter 1
+    this.maxDpr = Math.min(window.devicePixelRatio, 2); this.dpr = this.maxDpr;
     this.renderer.setPixelRatio(this.dpr);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -163,7 +164,7 @@ export class World {
     this.fpsAcc += dt; this.fpsN++;
     if (this.fpsAcc < 2) return;
     const fps = this.fpsN / this.fpsAcc; this.fpsAcc = 0; this.fpsN = 0;
-    const next = fps < 45 ? Math.max(0.6, this.dpr - 0.15) : fps > 58 ? Math.min(this.maxDpr, this.dpr + 0.1) : this.dpr;
+    const next = fps < 28 ? Math.max(Math.min(1, this.maxDpr), this.dpr - 0.1) : fps > 50 ? Math.min(this.maxDpr, this.dpr + 0.1) : this.dpr;
     if (Math.abs(next - this.dpr) < 0.01) return;
     this.dpr = next; this.renderer.setPixelRatio(next);
     const size = this.renderer.getSize(new THREE.Vector2()); this.renderer.setSize(size.x, size.y, false);

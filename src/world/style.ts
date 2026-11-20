@@ -90,7 +90,10 @@ export function applyLook(look: Look, t: LookTarget): EffectComposer | null {
 
 
 
-  const composer = new EffectComposer(renderer);
+  // Mehrfachabtastung (MSAA) im Zwischenbild: glatte Kanten trotz Nachbearbeitung
+  const size = renderer.getSize(new THREE.Vector2()), pr0 = renderer.getPixelRatio();
+  const rt = new THREE.WebGLRenderTarget(size.x * pr0, size.y * pr0, { type: THREE.HalfFloatType, samples: 4 });
+  const composer = new EffectComposer(renderer, rt);
   composer.addPass(new RenderPass(scene, t.camera));
   if (bloom) composer.addPass(bloom);
   composer.addPass(grade);
