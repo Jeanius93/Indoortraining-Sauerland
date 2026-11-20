@@ -443,4 +443,4 @@ function updateHud(grade: number) {
 }
 
 (window as unknown as { __sauerland: unknown }).__sauerland = { get world() { return world; } };
-init().catch(e => { $('loading').firstElementChild!.textContent = `Fehler beim Laden: ${(e as Error).message}`; console.error(e); });
+init().catch(e => { $('loading').firstElementChild!.textContent = 'Fehler beim Laden'; const el = $('loadError'); el.hidden = false; el.textContent += `${(e as Error).message}\n${(e as Error).stack ?? ''}`; console.error(e); });

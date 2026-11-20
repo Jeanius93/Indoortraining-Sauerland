@@ -162,6 +162,9 @@ h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .12em; text-transform: up
 
 #loading { position: fixed; inset: 0; display: grid; place-items: center; background: var(--bg); font-family: var(--f-num); font-size: 22px; color: var(--ink-dim); z-index: 50; }
 #loading span { animation: pulse 1.4s ease-in-out infinite; }
+#loading { grid-auto-flow: row; align-content: center; gap: 10px; text-align: center; padding: 16px; }
+#loadStep { font-family: var(--f-text); font-size: 14px; color: var(--ink-dim); }
+#loadError { white-space: pre-wrap; font: 13px/1.4 ui-monospace, Consolas, monospace; color: #ffb4a8; background: #2a1512; border: 1px solid #8a1f17; border-radius: 8px; padding: 10px 14px; max-width: min(900px, 92vw); text-align: left; }
 @keyframes pulse { 50% { opacity: .4; } }
 #toast { position: fixed; left: 50%; top: calc(var(--safe-t) + 120px); transform: translateX(-50%); background: var(--glass-strong); border: 1px solid var(--line); border-radius: 999px; padding: 8px 16px; font-size: 14px; z-index: 40; max-width: calc(100% - 32px); text-align: center; }
 @media (prefers-reduced-motion: reduce) { #loading span { animation: none; } }

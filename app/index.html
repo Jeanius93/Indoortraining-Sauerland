@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de">
+<html lang="de" data-v="2026-11-20b">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -146,7 +146,18 @@
   </div>
 </section>
 
-<div id="loading"><span>Sauerland wird aufgebaut …</span></div>
+<div id="loading"><span>Sauerland wird aufgebaut …</span><small id="loadStep"></small><pre id="loadError" hidden></pre></div>
+<script>
+  // Fehler beim Laden sichtbar machen (auch wenn das Hauptprogramm gar nicht startet)
+  (function () {
+    var t0 = Date.now();
+    function show(msg) { var e = document.getElementById('loadError'); if (!e) return; e.hidden = false; e.textContent += msg + '\n'; }
+    window.addEventListener('error', function (e) { show('Fehler: ' + (e.message || e.target && (e.target.src || e.target.href) || 'unbekannt')); }, true);
+    window.addEventListener('unhandledrejection', function (e) { show('Fehler: ' + (e.reason && e.reason.message || e.reason)); });
+    setInterval(function () { var s = document.getElementById('loadStep'); if (s) s.textContent = Math.round((Date.now() - t0) / 1000) + ' s · Version ' + document.documentElement.dataset.v; }, 1000);
+    setTimeout(function () { if (!window.__sauerland) show('Das Programm ist nach 20 s nicht gestartet. Browser: ' + navigator.userAgent); }, 20000);
+  })();
+</script>
 <div id="toast" role="status" hidden></div>
 <div id="lostBanner" role="alert" hidden>Verbindung zum Trainer verloren – verbinde neu … Die Fahrt ist gesichert und pausiert.</div>
 <script type="module" src="../src/main.ts"></script>
