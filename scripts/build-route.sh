@@ -15,7 +15,7 @@ python3 scripts/prepare-roads.py "$OUT" | tail -1
 node scripts/prepare-world.mjs "$OUT" > "scripts/.cache/world-$ID.log" 2>&1
 tail -c 400 "scripts/.cache/world-$ID.log" | tr '\r' '\n' | tail -3
 python3 scripts/close-loop.py "$OUT"
-python3 scripts/prepare-furniture.py "$OUT" "${GPKG[@]}" | head -1 | cut -c1-200
+python3 scripts/prepare-furniture.py "$OUT" "${GPKG[@]}" > "scripts/.cache/furniture-$ID.log"; cut -c1-200 "scripts/.cache/furniture-$ID.log"
 python3 scripts/fetch-dop.py "$OUT" | tail -1
 python3 scripts/prepare-houses.py "$OUT"
 python3 scripts/prepare-landmarks.py "$OUT"
