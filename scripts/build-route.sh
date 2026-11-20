@@ -18,5 +18,6 @@ python3 scripts/close-loop.py "$OUT"
 python3 scripts/prepare-furniture.py "$OUT" "${GPKG[@]}" > "scripts/.cache/furniture-$ID.log"; cut -c1-200 "scripts/.cache/furniture-$ID.log"
 python3 scripts/fetch-dop.py "$OUT" | tail -1
 python3 scripts/prepare-houses.py "$OUT"
+python3 scripts/prepare-churches.py "$OUT"
 python3 scripts/prepare-landmarks.py "$OUT"
 echo "fertig: $ID"

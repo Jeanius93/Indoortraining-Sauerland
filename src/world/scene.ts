@@ -10,6 +10,7 @@ import type { EffectComposer } from 'three/examples/jsm/postprocessing/EffectCom
 import { buildFurniture } from './furniture';
 import { buildLandmarks } from './landmarks';
 import { GrassField } from './grass';
+import { Life } from './life';
 import { SUN, shaderTime, BuildingField, Heightfield, TreeField, buildLanduseTerrain, buildChimneys, houseMaterial, buildRoad, buildSideRoads, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
 
 export const cameraModes = ['Verfolger', 'Seite', 'Ego', 'Drohne'] as const;
@@ -35,6 +36,8 @@ export class World {
   private houses: THREE.Object3D | null = null;
   private fpsAcc = 0; private fpsN = 0; private dpr = 1; private maxDpr = 1;
   private grass: GrassField | null = null;
+  private life: Life | null = null;
+  private lat = 0;
   /** Test-/Entwicklungsansicht: feste Kamera (lokale Koordinaten x Ost, y Nord, z Höhe) */
   debugView: { from: number[]; to: number[] } | null = null;
   readonly look: Look;
@@ -95,6 +98,10 @@ export class World {
       const trees = buildTrees(this.hf, dist, route, quality);
       this.treeCount = trees.count; add('trees', trees.group);
     }
+    if (this.look === 'ens') {
+      this.life = new Life({ route, hf: this.hf, quality, lu: data.landuse, luInfo: lu, houses: data.houses, sideRoads: data.sideRoads, towns: data.furniture?.towns ?? [] });
+      add('other', this.life.group);
+    }
     this.composer = applyLook(this.look, { scene: this.scene, renderer: this.renderer, camera: this.camera, sky: this.sky.mesh, sun: this.sun, hemi, layers });
 
     this.avatar = new Avatar(style);
@@ -113,7 +120,11 @@ export class World {
   frame(d: number, dt: number, speed: number, cadence: number, effort: number) {
     const p = this.route.pose(d);
     const a = this.avatar.root;
-    a.position.set(p.x, p.h + 0.12, -p.y);
+    // rechts fahren (nicht auf Radwegen): seitlicher Versatz, weich nachgeführt
+    const latT = this.life ? this.life.traffic.riderOffset(this.route.wrap(d)) : 0;
+    this.lat += (latT - this.lat) * Math.min(1, dt * 1.5);
+    const shift = new THREE.Vector3(Math.cos(p.heading), 0, Math.sin(p.heading)).multiplyScalar(this.lat);   // nach rechts
+    a.position.set(p.x, p.h + 0.12, -p.y).add(shift);
     a.rotation.y = Math.PI - p.heading;
     this.avatar.update(dt, speed, cadence, p.curvature, p.grade, effort);
 
@@ -121,7 +132,7 @@ export class World {
     const fwd = new THREE.Vector3(Math.sin(p.heading), 0, -Math.cos(p.heading));
     const side = new THREE.Vector3(fwd.z, 0, -fwd.x); // links der Fahrtrichtung
     const ahead = this.route.pose(this.route.loop ? d + 25 : Math.min(d + 25, this.route.length));
-    const lookAhead = new THREE.Vector3(ahead.x, ahead.h + 1, -ahead.y);
+    const lookAhead = new THREE.Vector3(ahead.x, ahead.h + 1, -ahead.y).add(shift);
     const pos = new THREE.Vector3(), look = new THREE.Vector3();
     const back = (m: number) => this.route.pose(Math.max(0, d - m));
     switch (this.cameraMode) {
@@ -132,6 +143,7 @@ export class World {
       case 'Ego': pos.copy(a.position).addScaledVector(fwd, 0.35).add(new THREE.Vector3(0, 1.55, 0)); look.copy(lookAhead).add(new THREE.Vector3(0, 0.4, 0)); break;
       case 'Drohne': { const b = back(40); pos.set(b.x, b.h + 32, -b.y); look.copy(a.position).lerp(lookAhead, 0.4); break; }
     }
+    if (this.cameraMode === 'Verfolger' || this.cameraMode === 'Drohne') pos.add(shift);
     // Kamera nicht unter das Gelände
     const ground = this.hf.at(pos.x, -pos.z) + 1.2;
     if (pos.y < ground) pos.y = ground;
@@ -155,6 +167,7 @@ export class World {
     this.sky.update(dt);
     shaderTime.value += dt;
     this.sun.target.position.copy(a.position);
+    this.life?.update(dt, this.camera.position, a.position, this.route.wrap(d), speed, this.lat, this.renderer, this.camera);
     if (this.composer) this.composer.render(dt); else this.renderer.render(this.scene, this.camera);
     this.adaptResolution(dt);
   }
