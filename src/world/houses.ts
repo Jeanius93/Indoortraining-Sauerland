@@ -60,10 +60,20 @@ export function buildHouses(data: HouseData, material: THREE.Material, chunk = 1
     g.setAttribute('aWall', new THREE.Float32BufferAttribute(W, 2)); g.setAttribute('aBase', new THREE.Float32BufferAttribute(B, 1));
     g.setAttribute('aMeta', new THREE.Float32BufferAttribute(M, 1)); g.setAttribute('aEave', new THREE.Float32BufferAttribute(E, 1));
     g.computeVertexNormals();
+    g.computeBoundingSphere();
     const mesh = new THREE.Mesh(g, material); mesh.castShadow = mesh.receiveShadow = true; out.add(mesh);
   }
   const cg = new THREE.BoxGeometry(0.55, 1.8, 0.55).translate(0, 0.9, 0);
   const ci = new THREE.InstancedMesh(cg, new THREE.MeshStandardMaterial({ color: '#3b3d42', roughness: 0.9 }), chims.length);
   chims.forEach((m, i) => ci.setMatrixAt(i, m)); ci.castShadow = true; out.add(ci);
   return out;
+}
+
+/** Häuser-Kacheln hinter dem Dunst ausblenden, Schattenwurf nur nahe der Kamera */
+export function updateHouses(group: THREE.Object3D, cam: THREE.Vector3, far = 2600) {
+  for (const m of group.children) {
+    const s = (m as THREE.Mesh).geometry?.boundingSphere; if (!s || (m as THREE.InstancedMesh).isInstancedMesh) continue;
+    const d = Math.hypot(s.center.x - cam.x, s.center.z - cam.z) - s.radius;
+    m.visible = d < far; m.castShadow = d < 60;
+  }
 }

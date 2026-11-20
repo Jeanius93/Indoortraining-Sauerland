@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import type { Route, WorldData } from '../route';
 import { Avatar, type AvatarStyle } from './avatar';
 import { Sky } from './sky';
-import { buildHouses } from './houses';
+import { buildHouses, updateHouses } from './houses';
 import { ENS } from './lookflag';
 import { applyLook, usesPhoto, type Look, type Layers } from './style';
 import type { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -32,6 +32,8 @@ export class World {
   private trees: TreeField | null = null;
   private buildings: BuildingField | null = null;
   private lodTimer = 0;
+  private houses: THREE.Object3D | null = null;
+  private fpsAcc = 0; private fpsN = 0; private dpr = 1; private maxDpr = 1;
   private grass: GrassField | null = null;
   /** Test-/Entwicklungsansicht: feste Kamera (lokale Koordinaten x Ost, y Nord, z Höhe) */
   debugView: { from: number[]; to: number[] } | null = null;
@@ -40,7 +42,8 @@ export class World {
 
   constructor(canvas: HTMLCanvasElement, private route: Route, heights: Int16Array, data: WorldData, style: AvatarStyle, quality: 'low' | 'high') {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: quality === 'high', powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality === 'high' ? 2 : 1.5));
+    this.maxDpr = Math.min(window.devicePixelRatio, quality === 'high' ? 1.5 : 1.25); this.dpr = Math.min(1, this.maxDpr);
+    this.renderer.setPixelRatio(this.dpr);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -78,14 +81,14 @@ export class World {
     const w = route.data.world;
     const fogFar = (this.scene.fog as THREE.Fog).far;
     if (data.houses) {
-      add('buildings', buildHouses(data.houses, houseMaterial())); this.buildingCount = data.houses.houses.length;
+      this.houses = buildHouses(data.houses, houseMaterial()); add('buildings', this.houses); this.buildingCount = data.houses.houses.length;
     } else if (data.buildings && w) {
       this.buildings = new BuildingField(this.hf, data.buildings, w.buildings, fogFar);
       add('buildings', this.buildings.group); this.buildingCount = w.buildings.count;
       if (route.data.chimneys && data.buildings.ext) add('buildings', buildChimneys(route.data.chimneys));
     }
     if (data.trees) {
-      this.trees = new TreeField(this.hf, data.trees, dist, quality, quality === 'high' ? 500 : 300, fogFar);
+      this.trees = new TreeField(this.hf, data.trees, dist, quality, quality === 'high' ? 280 : 180, fogFar);
       add('trees', this.trees.group); this.treeCount = this.trees.count;
     } else {
       const trees = buildTrees(this.hf, dist, route, quality);
@@ -144,7 +147,7 @@ export class World {
 
     // Detailstufen nachführen (alle 0,4 s)
     this.lodTimer -= dt;
-    if (this.lodTimer <= 0) { this.lodTimer = 0.4; this.trees?.update(this.camera.position); this.buildings?.update(this.camera.position); this.grass?.update(this.camera.position); }
+    if (this.lodTimer <= 0) { this.lodTimer = 0.4; this.trees?.update(this.camera.position); this.buildings?.update(this.camera.position); if (this.houses) updateHouses(this.houses, this.camera.position); this.grass?.update(this.camera.position); }
 
     // Schatten-Kamera folgt dem Avatar
     this.sun.position.copy(a.position).addScaledVector(SUN, 600);
@@ -152,6 +155,19 @@ export class World {
     shaderTime.value += dt;
     this.sun.target.position.copy(a.position);
     if (this.composer) this.composer.render(dt); else this.renderer.render(this.scene, this.camera);
+    this.adaptResolution(dt);
+  }
+
+  /** Auflösung an die Bildrate anpassen: unter 45 fps kleiner, über 58 fps wieder größer (alle 2 s) */
+  private adaptResolution(dt: number) {
+    this.fpsAcc += dt; this.fpsN++;
+    if (this.fpsAcc < 2) return;
+    const fps = this.fpsN / this.fpsAcc; this.fpsAcc = 0; this.fpsN = 0;
+    const next = fps < 45 ? Math.max(0.6, this.dpr - 0.15) : fps > 58 ? Math.min(this.maxDpr, this.dpr + 0.1) : this.dpr;
+    if (Math.abs(next - this.dpr) < 0.01) return;
+    this.dpr = next; this.renderer.setPixelRatio(next);
+    const size = this.renderer.getSize(new THREE.Vector2()); this.renderer.setSize(size.x, size.y, false);
+    (this.composer as unknown as { fit?: () => void } | null)?.fit?.();
   }
 
   /** Kamera ohne Nachziehen neu setzen (nach einem Sprung) */

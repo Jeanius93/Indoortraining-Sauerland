@@ -42,7 +42,7 @@ export class GrassField {
     const nrm = geo.attributes.normal; for (let i = 0; i < nrm.count; i++) nrm.setXYZ(i, 0, 1, 0);   // Licht wie Boden
     const mat = ENS ? new THREE.MeshBasicMaterial({ map: bladeTexture(), alphaTest: 0.4, side: THREE.DoubleSide, color: new THREE.Color(0.95, 0.98, 0.85) }) : new THREE.MeshLambertMaterial({ map: bladeTexture(), alphaTest: 0.45, side: THREE.DoubleSide });
     const MEADOW = new Set([0, 1, 12, 13, 14]);
-    const perMeter = ENS ? 9 : quality === 'high' ? 3.0 : 0.9, CH = 300;
+    const perMeter = ENS ? 5 : quality === 'high' ? 3.0 : 0.9, CH = 300;
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
     for (let start = 0; start < n - 1; start += Math.round(CH / step)) {
       const mats: THREE.Matrix4[] = [], cols: THREE.Color[] = [];
@@ -68,5 +68,5 @@ export class GrassField {
       this.chunks.push({ c: new THREE.Vector3(x[mid], 0, -y[mid]), mesh: im }); this.group.add(im);
     }
   }
-  update(cam: THREE.Vector3) { for (const c of this.chunks) c.mesh.visible = Math.hypot(c.c.x - cam.x, c.c.z - cam.z) < 260; }
+  update(cam: THREE.Vector3) { for (const c of this.chunks) c.mesh.visible = Math.hypot(c.c.x - cam.x, c.c.z - cam.z) < 200; }
 }

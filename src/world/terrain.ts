@@ -277,7 +277,7 @@ export class TreeField {
         if (!list.length) return;
         for (const [g, target] of [[gn, near], [gf, far]] as const) {
           const im = new THREE.InstancedMesh(g, mat, list.length), c = new THREE.Color();
-          im.castShadow = quality === 'high' && target === near;
+          im.castShadow = false;
           list.forEach((mm, i) => { im.setMatrixAt(i, mm); c.setScalar(tint[i]); im.setColorAt(i, c); });
           im.computeBoundingSphere(); target.add(im);
         }
@@ -307,7 +307,7 @@ function lushGeometries() {
   };
   const blob = (x: number, y: number, z: number, r: number, seed: number) => {
     // weich gewellte Kugel (Wellung hängt von der Richtung ab → keine Stacheln)
-    const g = new THREE.IcosahedronGeometry(r, 3), p = g.attributes.position, ph = seed * 1.7;
+    const g = new THREE.IcosahedronGeometry(r, 1), p = g.attributes.position, ph = seed * 1.7;
     for (let i = 0; i < p.count; i++) {
       const vx = p.getX(i) / r, vy = p.getY(i) / r, vz = p.getZ(i) / r;
       const f = 1 + 0.09 * Math.sin(vx * 4 + ph) * Math.sin(vy * 4 + ph * 0.7) + 0.06 * Math.sin(vz * 7 + ph * 1.3);
@@ -317,15 +317,15 @@ function lushGeometries() {
   };
   const crown: THREE.BufferGeometry[] = [];
   const r = rng(77);
-  for (let i = 0; i < 9; i++) { const a = r() * Math.PI * 2, d = 0.06 + r() * 0.12, y = 0.5 + r() * 0.38; crown.push(blob(Math.cos(a) * d, y, Math.sin(a) * d, 0.13 + r() * 0.09, i + 1)); }
+  for (let i = 0; i < 6; i++) { const a = r() * Math.PI * 2, d = 0.05 + r() * 0.1, y = 0.52 + r() * 0.34; crown.push(blob(Math.cos(a) * d, y, Math.sin(a) * d, 0.15 + r() * 0.09, i + 1)); }
   const leaf = mergeGeos(crown.map(g => shadeByHeight(g, new THREE.Color('#1e3d12'), new THREE.Color('#86b442'), 0.38, 1.0)));
   const trunk = shadeByHeight(new THREE.CylinderGeometry(0.014, 0.03, 0.55, 7, 1, true).translate(0, 0.27, 0), new THREE.Color('#2e2118'), new THREE.Color('#5b4434'), 0, 0.55);
   const branches = [0, 2.1, 4.2].map(a => shadeByHeight(new THREE.CylinderGeometry(0.006, 0.012, 0.22, 5).rotateZ(0.7).rotateY(a).translate(Math.cos(a) * 0.06, 0.48, Math.sin(a) * 0.06), new THREE.Color('#3a2a1e'), new THREE.Color('#4d3a2b'), 0.4, 0.6));
   // Fichte: 9 hängende Astetagen, dunkel unten, frische Spitzen oben
   const tiers: THREE.BufferGeometry[] = [];
-  for (let i = 0; i < 9; i++) {
-    const t = i / 8, rad = 0.2 * (1 - t * 0.85) + 0.01, h = 0.2 - t * 0.07, y = 0.16 + t * 0.74;
-    const cone = new THREE.ConeGeometry(rad, h, 12, 2, true), p = cone.attributes.position;
+  for (let i = 0; i < 6; i++) {
+    const t = i / 5, rad = 0.2 * (1 - t * 0.85) + 0.01, h = 0.2 - t * 0.07, y = 0.16 + t * 0.74;
+    const cone = new THREE.ConeGeometry(rad * 1.1, h * 1.3, 9, 1, true), p = cone.attributes.position;
     for (let k = 0; k < p.count; k++) { const yy = p.getY(k), rr2 = Math.hypot(p.getX(k), p.getZ(k)); p.setY(k, yy - rr2 * rr2 * 1.6); }   // hängende Äste
     tiers.push(shadeByHeight(cone.translate(0, y + h / 2, 0), new THREE.Color('#0f2410'), new THREE.Color(t > 0.85 ? '#5c8f3c' : '#2f5a2a'), y - h, y + h));
   }

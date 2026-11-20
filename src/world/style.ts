@@ -18,7 +18,6 @@ export interface LookTarget {
   sky: THREE.Mesh; sun: THREE.DirectionalLight; hemi: THREE.HemisphereLight; layers: Layers;
 }
 
-const meshes = (objs: THREE.Object3D[], fn: (m: THREE.Mesh) => void) => objs.forEach(o => o.traverse(c => { if ((c as THREE.Mesh).isMesh) fn(c as THREE.Mesh); }));
 
 
 // ---------- Farbkorrektur / Vignette / Umrisse / Tilt-Shift in einem Durchgang ----------
@@ -63,7 +62,7 @@ const GradeShader = {
 
 /** Look anwenden. Liefert einen EffectComposer (oder null, wenn normal gerendert wird). */
 export function applyLook(look: Look, t: LookTarget): EffectComposer | null {
-  const { scene, renderer, layers } = t;
+  const { scene, renderer } = t;
   const grade = new ShaderPass(GradeShader);
   const u = grade.uniforms as Record<string, THREE.IUniform>;
   let bloom: UnrealBloomPass | null = null;
@@ -83,7 +82,6 @@ export function applyLook(look: Look, t: LookTarget): EffectComposer | null {
     renderer.toneMappingExposure = 1.1;
     bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.45, 0.75, 0.78);
     u.saturation.value = 1.12; u.contrast.value = 1.06; u.brightness.value = 0.01; u.vignette.value = 0.4; u.tint.value = new THREE.Color(1.04, 1.0, 0.92);
-    meshes(layers.trees, m => { m.castShadow = true; });
   }
 
 
