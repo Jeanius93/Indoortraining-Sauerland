@@ -75,7 +75,8 @@
     <article class="route-card">
       <canvas id="routeThumb" width="640" height="150" aria-label="Höhenprofil der Strecke"></canvas>
       <div class="route-info">
-        <h2 id="routeName">Strecke wird geladen …</h2>
+        <label class="route-pick"><span class="sr">Strecke wählen</span><select id="routeSelect" aria-label="Strecke wählen"></select></label>
+        <h2 id="routeName" hidden>Strecke wird geladen …</h2>
         <dl>
           <div><dt>Länge</dt><dd id="routeLen">–</dd></div>
           <div><dt>Anstieg</dt><dd id="routeUp">–</dd></div>

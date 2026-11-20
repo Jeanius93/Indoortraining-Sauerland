@@ -1,5 +1,5 @@
 import './styles.css';
-import { loadRoute, type Route } from './route';
+import { loadRoute, listRoutes, type Route, type RouteInfo } from './route';
 import { World } from './world/scene';
 import { ENS } from './world/lookflag';
 import { stepSpeed, defaultRider, type RiderSettings } from './physics';
@@ -20,8 +20,8 @@ const fmtTime = (s: number) => { s = Math.floor(s); const h = Math.floor(s / 360
 const fmtMin = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 // ---------- Einstellungen ----------
-interface Settings { ftp: number; kg: number; difficulty: number; jersey: string; mode: 'sim' | 'erg'; workout: string; quality: 'auto' | 'high' | 'low' }
-const defaults: Settings = { ftp: 250, kg: 80, difficulty: 50, jersey: '#d2412f', mode: 'sim', workout: 'free', quality: 'auto' };
+interface Settings { route: string; ftp: number; kg: number; difficulty: number; jersey: string; mode: 'sim' | 'erg'; workout: string; quality: 'auto' | 'high' | 'low' }
+const defaults: Settings = { route: 'hausrunde', ftp: 250, kg: 80, difficulty: 50, jersey: '#d2412f', mode: 'sim', workout: 'free', quality: 'auto' };
 function loadSettings(): Settings {
   try { return { ...defaults, ...JSON.parse(localStorage.getItem('sauerland.settings') ?? '{}') }; } catch { return { ...defaults }; }
 }
@@ -31,11 +31,12 @@ const settings = loadSettings();
 // ---------- Zustand ----------
 let route: Route, world: World, profile: ProfileChart, minimap: MiniMap, picker: PlacePicker;
 let chosenStart: number | null = null;
+let routes: RouteInfo[] = [];
 let rideId = '', rideSimulated = false, trainerLost = false, lastSave = 0, resumeRide: StoredRide | null = null;
 let trainer: Trainer | null = null, hrm: HeartRateMonitor | null = null;
 let power = 0, cadence = 0, hr: number | undefined, hrFromStrap = false;
 let running = false, paused = false;
-let dist = 0, speed = 0, elapsed = 0, lastSampleSec = -1, nextSimSend = 0;
+let dist = 0, rideStart = 0, lap = 0, speed = 0, elapsed = 0, lastSampleSec = -1, nextSimSend = 0;
 let ergTarget = 200, ergBias = 0;
 let recorder = new Recorder();
 let wakeLock: { release(): Promise<void> } | null = null;
@@ -54,7 +55,10 @@ function toast(msg: string, ms = 2600) {
 
 // ---------- Start ----------
 async function init() {
-  const loaded = await loadRoute('routes/hausrunde', msg => { $('loading').firstElementChild!.textContent = msg; }, { fine: settings.quality === 'high' && import.meta.env.MODE !== 'artifact', photo: !ENS });
+  routes = await listRoutes();
+  if (!routes.some(r => r.id === settings.route)) settings.route = routes[0]?.id ?? 'hausrunde';
+  renderRoutePicker();
+  const loaded = await loadRoute(`routes/${settings.route}`, msg => { $('loading').firstElementChild!.textContent = msg; }, { fine: settings.quality === 'high' && import.meta.env.MODE !== 'artifact', photo: !ENS });
   route = loaded.route;
   $('loading').firstElementChild!.textContent = 'Sauerland wird aufgebaut …';
   // Schrift für Ortstafeln laden (höchstens 2 s warten)
@@ -251,13 +255,14 @@ $('btnGo').onclick = async () => {
   if (!trainer) return;
   $('start').hidden = true; $('hud').hidden = false;
   running = true; paused = false;
-  dist = startDist(); speed = 0; elapsed = 0; lastSampleSec = -1; ergBias = 0; recorder = new Recorder();
-  rideId = new Date().toISOString(); rideSimulated = trainer.simulated; trainerLost = false;
+  dist = startDist(); speed = 0; elapsed = 0; lastSampleSec = -1; ergBias = 0; recorder = new Recorder(); lap = 0;
+  rideId = new Date().toISOString(); rideSimulated = trainer.simulated; trainerLost = false; rideStart = dist;
   if (resumeRide) {           // unterbrochene Fahrt fortsetzen
     recorder.samples = resumeRide.samples; rideId = resumeRide.id; rideSimulated = resumeRide.simulated && trainer.simulated;
     const lastS = recorder.samples.at(-1); dist = lastS?.dist ?? 0; elapsed = recorder.samples.length; lastSampleSec = Math.floor(elapsed);
     resumeRide = null; $('resumeBox').hidden = true; $('btnGo').textContent = 'Losfahren';
     world.snapCamera();
+    rideStart = (recorder.samples[0]?.dist ?? dist); lap = Math.floor((dist - rideStart) / route.length);
   }
   ergTarget = Math.round(settings.ftp * 0.65 / 5) * 5;
   applyMode();
@@ -284,7 +289,7 @@ function finish() {
     ['Anstieg', `${fmt(s.ascent)} Hm`],
   ] : [['Strecke', '0 km']];
   $('summary').innerHTML = rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('');
-  $('doneTitle').textContent = dist >= route.length - 1 ? 'Runde geschafft!' : 'Gut gefahren!';
+  $('doneTitle').textContent = route.loop ? (lap >= 1 ? `${lap} ${lap === 1 ? 'Runde' : 'Runden'} geschafft!` : 'Gut gefahren!') : dist >= route.length - 1 ? 'Runde geschafft!' : 'Gut gefahren!';
   $<HTMLButtonElement>('btnFit').disabled = !s || s.duration < 10;
   void persist(true, true).then(() => { if (s && s.duration >= 10) saveFit(true); else $('uploadStatus').textContent = 'Fahrt zu kurz zum Speichern (unter 10 Sekunden)'; });
   $('lostBanner').hidden = true;
@@ -307,6 +312,14 @@ $('btnFit').onclick = () => saveFit();
 $('btnAgain').onclick = () => {
   rideId = ''; $('done').hidden = true; $('start').hidden = false; dist = startDist(); world.snapCamera(); };
 
+// ---------- Streckenauswahl ----------
+function renderRoutePicker() {
+  const sel = $<HTMLSelectElement>('routeSelect');
+  sel.innerHTML = routes.map(r => `<option value="${r.id}">${r.name}${r.length ? ` · ${fmt(r.length / 1000, 1)} km · ${fmt(r.ascent)} Hm` : ''}</option>`).join('');
+  sel.value = settings.route;
+  sel.onchange = () => { if (running) return; settings.route = sel.value; chosenStart = null; saveSettings(); $('loading').hidden = false; $('loading').firstElementChild!.textContent = 'Strecke wird gewechselt …'; location.reload(); };
+}
+
 // ---------- Sicherung der Fahrt ----------
 const warnUnload = (e: BeforeUnloadEvent) => { persist(true); e.preventDefault(); e.returnValue = ''; };
 function persist(force = false, finished = false) {
@@ -314,7 +327,7 @@ function persist(force = false, finished = false) {
   const now = Date.now();
   if (!force && now - lastSave < 5000) return Promise.resolve();
   lastSave = now;
-  return saveRide({ id: rideId, route: 'hausrunde', samples: recorder.samples, finished, simulated: rideSimulated, upload: finished ? { status: 'pending' } : undefined });
+  return saveRide({ id: rideId, route: settings.route, samples: recorder.samples, finished, simulated: rideSimulated, upload: finished ? { status: 'pending' } : undefined });
 }
 addEventListener('pagehide', () => { if (running) persist(true); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && running) persist(true); });
@@ -323,6 +336,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && run
 async function checkPending() {
   const rides = await listRides();
   const open = rides.find(r => !r.finished && r.samples.length >= 30);
+  if (open && open.route && open.route !== settings.route && routes.some(r => r.id === open.route)) { settings.route = open.route; saveSettings(); location.reload(); return; }
   if (open) {
     resumeRide = open;
     const last = open.samples.at(-1)!;
@@ -351,7 +365,7 @@ const canJump = () => !running || !!trainer?.simulated;
 function jumpTo(d: number) {
   d = Math.max(0, Math.min(route.length - 50, d));
   if (!canJump()) { toast('Springen geht während einer echten Fahrt nicht – nur im Simulator oder vor dem Start'); return; }
-  if (running) { dist = d; toast(`Weiter bei km ${fmt(d / 1000, 1)}`); }
+  if (running) { const ridden = dist - rideStart; dist = d + Math.floor(dist / route.length) * (route.loop ? route.length : 0); rideStart = dist - ridden; toast(`Weiter bei km ${fmt(d / 1000, 1)}`); }
   else { chosenStart = d; dist = d; updateStartLabel(); }
   world.snapCamera();
   picker.hide();
@@ -384,7 +398,7 @@ function loop(now: number) {
     for (let left = realDt; left > 1e-6; left -= 0.05) {
       const h = Math.min(0.05, left);
       speed = stepSpeed(speed, p, route.gradeAt(dist), rider(), h);
-      dist = Math.min(route.length, dist + speed * h);
+      dist = route.loop ? dist + speed * h : Math.min(route.length, dist + speed * h);
       elapsed += h;
     }
     // Trainer steuern
@@ -403,7 +417,10 @@ function loop(now: number) {
       recorder.add({ t: Date.now(), dist, speed, power: trainer ? power : 0, cadence, hr, lat, lon, alt: route.hAt(dist) });
       void persist();
     }
-    if (dist >= route.length) finish();
+    if (route.loop) {
+      const l = Math.floor((dist - rideStart) / route.length);
+      if (l > lap) { lap = l; toast(`Runde ${lap} geschafft – weiter geht’s mit Runde ${lap + 1}`, 4000); }
+    } else if (dist >= route.length) finish();
   } else if (running && (paused || stalled)) {
     if (stalled) lastPhysics = now;
     speed = Math.max(0, speed - dt * 3);
@@ -428,9 +445,11 @@ function updateHud(grade: number) {
   document.querySelector<HTMLElement>('.tile.grade')!.style.setProperty('--grade-c', grade > 1 ? gradeColor(grade) : 'var(--ink)');
   $('vTime').textContent = fmtTime(elapsed);
   $('vDist').textContent = `${fmt(dist / 1000, 2)} km`;
-  $('vLeft').textContent = `${fmt((route.length - dist) / 1000, 1)} km`;
-  profile.draw(dist);
-  minimap.draw(dist);
+  const pos = route.wrap(dist);
+  $('vDist').textContent = `${fmt((dist - rideStart) / 1000, 2)} km`;
+  $('vLeft').textContent = route.loop ? `R${lap + 1} · ${fmt((route.length - pos) / 1000, 1)} km` : `${fmt((route.length - dist) / 1000, 1)} km`;
+  profile.draw(pos);
+  minimap.draw(pos);
   if (settings.mode === 'erg') {
     const w = workout();
     if (w.steps.length) {

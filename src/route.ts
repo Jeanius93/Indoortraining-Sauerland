@@ -19,6 +19,7 @@ export interface RouteData {
   };
   landuse?: { px: number; w: number; h: number; classes: Record<string, string> };
   chimneys?: number[][];
+  loop?: boolean;   // Rundkurs: Start = Ziel, mehrere Runden möglich
   places?: { d: number; road: string | null; area: string | null }[];
   surface?: { from: number; to: number; type: 'radweg' }[];
   width?: number[];   // echte Fahrbahnbreite je Streckenpunkt (m)
@@ -52,8 +53,12 @@ export class Route {
   constructor(readonly data: RouteData) { this.n = data.x.length; }
 
   get length() { return this.data.length; }
+  get loop() { return !!this.data.loop; }
+  /** Rundkurs: Streckenmeter auf eine Runde abbilden */
+  wrap(d: number) { if (!this.loop) return d; const L = this.length; return ((d % L) + L) % L; }
 
   private lerp(arr: number[], d: number) {
+    d = this.wrap(d);
     const f = Math.min(Math.max(d / this.data.step, 0), this.n - 1);
     const i = Math.min(Math.floor(f), this.n - 2), t = f - i;
     return arr[i] + (arr[i + 1] - arr[i]) * t;
@@ -68,7 +73,7 @@ export class Route {
   }
 
   gradeAt(d: number, span = 15) {
-    const a = Math.max(0, d - span), b = Math.min(this.length, d + span);
+    const a = this.loop ? d - span : Math.max(0, d - span), b = this.loop ? d + span : Math.min(this.length, d + span);
     return b > a ? (this.hAt(b) - this.hAt(a)) / (b - a) * 100 : 0;
   }
 
@@ -99,6 +104,13 @@ async function fetchBin(base: string, name: string): Promise<ArrayBuffer> {
   // gzip-gepackt veröffentlicht (spart ~60 % Ladezeit) → im Browser entpacken
   if (u[0] === 0x1f && u[1] === 0x8b) return new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
   return buf;
+}
+
+export interface RouteInfo { id: string; name: string; length: number; ascent: number; maxGrade: number }
+/** Verfügbare Strecken (routes/index.json) */
+export async function listRoutes(): Promise<RouteInfo[]> {
+  try { const r = await fetch('routes/index.json'); if (r.ok) return await r.json(); } catch { /* egal */ }
+  return [{ id: 'hausrunde', name: 'Hausrunde', length: 0, ascent: 0, maxGrade: 0 }];
 }
 
 export async function loadRoute(base: string, onProgress?: (msg: string) => void, opts: { fine?: boolean; photo?: boolean } = {}) {

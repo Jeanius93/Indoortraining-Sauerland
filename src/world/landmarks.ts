@@ -4,8 +4,8 @@ import * as THREE from 'three';
 import type { Heightfield } from './terrain';
 
 export interface LandmarkData {
-  dam: { crest: number[][]; towers: number[][]; lake: number; downstream: number[] };
-  aqua: { slides: { pts: number[][]; color: string; stripe: string | null; r: number }[]; tower: number[]; funnel: number[]; pools: number[][][]; ground: number };
+  dam: { crest: number[][]; towers: number[][]; lake: number; downstream: number[] } | null;
+  aqua: null | { slides: { pts: number[][]; color: string; stripe: string | null; r: number }[]; tower: number[]; funnel: number[]; pools: number[][][]; ground: number };
   power: { pylons: number[][]; lines: [number, number][] };
   towers: [number, number, number, number, number, string][];
 }
@@ -32,7 +32,7 @@ function masonry() {
   }, true);
 }
 
-function buildDam(d: LandmarkData['dam'], hf: Heightfield) {
+function buildDam(d: NonNullable<LandmarkData['dam']>, hf: Heightfield) {
   const grp = new THREE.Group(), c = d.crest, n = c.length;
   const dsx = d.downstream[0], dsy = d.downstream[1];
   // Kronenlinie fein unterteilen (Catmull-Rom)
@@ -106,7 +106,7 @@ function stripeTex(color: string, stripe: string | null) {
   }, true);
 }
 
-function buildAqua(a: LandmarkData['aqua'], hf: Heightfield) {
+function buildAqua(a: NonNullable<LandmarkData['aqua']>, hf: Heightfield) {
   const grp = new THREE.Group(), steel = std('#c9ced3', 0.4, 0.7);
   for (const s of a.slides) {
     const curve = new THREE.CatmullRomCurve3(s.pts.map(p => V(p[0], p[1], p[2])));
@@ -264,7 +264,9 @@ function buildPower(p: LandmarkData['power'], hf: Heightfield) {
 
 export function buildLandmarks(d: LandmarkData, hf: Heightfield) {
   const grp = new THREE.Group();
-  grp.add(buildDam(d.dam, hf), buildAqua(d.aqua, hf), buildPower(d.power, hf));
+  if (d.dam) grp.add(buildDam(d.dam, hf));
+  if (d.aqua) grp.add(buildAqua(d.aqua, hf));
+  grp.add(buildPower(d.power, hf));
   for (const [x, y, , h, size, fn] of d.towers) {
     const base = hf.at(x, y) - 0.5;
     let m: THREE.Object3D;

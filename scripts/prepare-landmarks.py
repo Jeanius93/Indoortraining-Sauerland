@@ -109,4 +109,9 @@ for i in range(len(P)):
 power = {'pylons': [[t['x'], t['y'], t['z'], t['height'], dirs[i]] for i, t in enumerate(P)], 'lines': sorted(edges)}
 print(f'Hochspannung: {len(P)} Masten, {len(edges)} Spannfelder')
 others = [[t['x'], t['y'], t['z'], t['height'], t['size'], t['fn']] for t in route.get('towers', []) if t['fn'] != '51002_1251']
+T_ = route['terrain']
+def inside(x, y): return T_['x0'] < x < T_['x0'] + (T_['nx'] - 1) * T_['cell'] and T_['y0'] < y < T_['y0'] + (T_['ny'] - 1) * T_['cell']
+if not inside(*dam['crest'][4][:2]): dam = None
+if not inside(*aqua['tower'][:2]): aqua = None
+print('Talsperre', 'ja' if dam else 'nein', '· Aqua Magis', 'ja' if aqua else 'nein')
 json.dump({'dam': dam, 'aqua': aqua, 'power': power, 'towers': others}, open(os.path.join(route_dir, 'landmarks.json'), 'w'), separators=(',', ':'))
