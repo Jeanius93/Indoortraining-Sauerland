@@ -11,8 +11,7 @@ import { buildFit } from './fit';
 import { ProfileChart, MiniMap, drawWorkout, gradeColor, zoneColor } from './ui/charts';
 import { GamepadInput, type PadAction } from './ui/gamepad';
 import { PlacePicker, placeList, placeLabel } from './ui/places';
-import { saveRide, deleteRide, listRides, pruneRides, type StoredRide } from './storage';
-import { strava } from './strava';
+import { saveRide, deleteRide, listRides, type StoredRide } from './storage';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const fmt = (n: number, d = 0) => n.toLocaleString('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -54,7 +53,7 @@ function toast(msg: string, ms = 2600) {
 
 // ---------- Start ----------
 async function init() {
-  const loaded = await loadRoute('routes/hausrunde', msg => { $('loading').firstElementChild!.textContent = msg; }, { fine: quality === 'high' && import.meta.env.MODE !== 'artifact' });
+  const loaded = await loadRoute('routes/hausrunde', msg => { $('loading').firstElementChild!.textContent = msg; }, { fine: settings.quality === 'high' && import.meta.env.MODE !== 'artifact' });
   route = loaded.route;
   $('loading').firstElementChild!.textContent = 'Sauerland wird aufgebaut …';
   // Schrift für Ortstafeln laden (höchstens 2 s warten)
@@ -286,23 +285,26 @@ function finish() {
   $('summary').innerHTML = rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('');
   $('doneTitle').textContent = dist >= route.length - 1 ? 'Runde geschafft!' : 'Gut gefahren!';
   $<HTMLButtonElement>('btnFit').disabled = !s || s.duration < 10;
-  void persist(true, true).then(() => { if (s && s.duration >= 60) void autoUpload(); else setUpload('Fahrt zu kurz zum Hochladen (unter 1 Minute)', ''); });
+  void persist(true, true).then(() => { if (s && s.duration >= 10) saveFit(true); else $('uploadStatus').textContent = 'Fahrt zu kurz zum Speichern (unter 10 Sekunden)'; });
   $('lostBanner').hidden = true;
-  if (trainer?.simulated) $('fitHint').textContent = 'Hinweis: Diese Fahrt stammt aus dem Simulator – zum Testen gut, für Strava eher nicht. ' + $('fitHint').textContent;
 }
 
-$('btnFit').onclick = () => {
+/** FIT-Datei in den Download-Ordner speichern (nach dem Beenden automatisch) */
+function saveFit(auto = false) {
   try {
     const bytes = buildFit(recorder);
     const date = new Date(recorder.samples[0].t);
     const name = `Sauerland_${route.data.name}_${date.toISOString().slice(0, 16).replace(/[:T]/g, '-')}.fit`;
     const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/octet-stream' }));
     const a = document.createElement('a'); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-    toast(window.self !== window.top ? 'In der Vorschau kann der Browser keine Dateien speichern – in der richtigen App klappt es.' : `${name} gespeichert`, 4000);
-  } catch (e) { toast(`FIT-Export fehlgeschlagen: ${(e as Error).message}`); }
-};
-$('btnAgain').onclick = () => { $('done').hidden = true; $('start').hidden = false; dist = startDist(); world.snapCamera(); };
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    $('uploadStatus').textContent = `${auto ? 'Automatisch gespeichert' : 'Gespeichert'}: ${name} (Ordner „Downloads“)`;
+    $('uploadBox').className = 'upload ok';
+  } catch (e) { $('uploadStatus').textContent = `Speichern fehlgeschlagen: ${(e as Error).message}`; $('uploadBox').className = 'upload err'; }
+}
+$('btnFit').onclick = () => saveFit();
+$('btnAgain').onclick = () => {
+  rideId = ''; $('done').hidden = true; $('start').hidden = false; dist = startDist(); world.snapCamera(); };
 
 // ---------- Sicherung der Fahrt ----------
 const warnUnload = (e: BeforeUnloadEvent) => { persist(true); e.preventDefault(); e.returnValue = ''; };
@@ -316,55 +318,8 @@ function persist(force = false, finished = false) {
 addEventListener('pagehide', () => { if (running) persist(true); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && running) persist(true); });
 
-// ---------- Strava ----------
-function setUpload(text: string, cls: '' | 'ok' | 'err', link?: string, retry = false) {
-  $('uploadStatus').textContent = text;
-  $('uploadBox').className = `upload ${cls}`;
-  const a = $<HTMLAnchorElement>('uploadLink'); a.hidden = !link; if (link) a.href = link;
-  $('btnUpload').hidden = !retry;
-}
-async function uploadRide(r: StoredRide) {
-  const rec = new Recorder(); rec.samples = r.samples;
-  const start = new Date(r.samples[0].t);
-  const name = `Hausrunde ${start.toLocaleDateString('de-DE')} – Sauerland Indoor`;
-  try {
-    const id = await strava.upload(buildFit(rec), name, `sauerland-${r.id.replace(/[:.]/g, '-')}`, msg => setUpload(msg, ''));
-    r.upload = { status: 'ok', activityId: id }; await saveRide(r); void pruneRides();
-    setUpload('Auf Strava hochgeladen ✓', 'ok', `https://www.strava.com/activities/${id}`);
-  } catch (e) {
-    r.upload = { status: 'error', message: (e as Error).message }; await saveRide(r);
-    setUpload(`Hochladen fehlgeschlagen: ${(e as Error).message}. Die Fahrt ist gesichert – „Erneut hochladen“ oder FIT-Datei speichern.`, 'err', undefined, true);
-  }
-}
-async function autoUpload() {
-  const r = (await listRides()).find(x => x.id === rideId);
-  if (!r) return;
-  if (r.simulated) { setUpload('Simulator-Fahrt – wird nicht automatisch hochgeladen', '', undefined, strava.connected); return; }
-  if (!strava.connected) { setUpload('Nicht mit Strava verbunden – FIT-Datei speichern oder auf dem Startbildschirm Strava verbinden', ''); return; }
-  if (!strava.auto) { setUpload('Automatisches Hochladen ist aus', '', undefined, true); return; }
-  await uploadRide(r);
-}
-$('btnUpload').onclick = async () => { const r = (await listRides()).find(x => x.id === rideId); if (r) await uploadRide(r); };
-function renderStrava() {
-  const c = strava.config;
-  $('stravaOn').hidden = !strava.connected; $('stravaOff').hidden = strava.connected;
-  $('stravaWho').textContent = `Verbunden${c?.athlete ? ` als ${c.athlete}` : ''}`;
-  $<HTMLInputElement>('stravaAuto').checked = strava.auto;
-  $('stravaDomain').textContent = location.hostname || 'jeanius93.github.io';
-  if (c?.clientId) $<HTMLInputElement>('stravaId').value = c.clientId;
-}
-$('btnStravaOn').onclick = () => {
-  const id = $<HTMLInputElement>('stravaId').value, sec = $<HTMLInputElement>('stravaSecret').value || strava.config?.clientSecret || '';
-  if (!/^\d+$/.test(id.trim()) || sec.trim().length < 20) { toast('Bitte Client-ID (Zahl) und Client-Secret von strava.com/settings/api eintragen'); return; }
-  strava.connect(id, sec);
-};
-$('btnStravaOff').onclick = () => { strava.disconnect(); renderStrava(); toast('Strava getrennt'); };
-$<HTMLInputElement>('stravaAuto').onchange = e => strava.setAuto((e.target as HTMLInputElement).checked);
-
-/** Beim Start: Rückkehr von Strava verarbeiten, unterbrochene/nicht hochgeladene Fahrten anbieten */
+/** Beim Start: unterbrochene Fahrt anbieten */
 async function checkPending() {
-  try { const msg = await strava.finishConnect(); if (msg) toast(msg, 4000); } catch (e) { toast(`Strava: ${(e as Error).message}`, 6000); }
-  renderStrava();
   const rides = await listRides();
   const open = rides.find(r => !r.finished && r.samples.length >= 30);
   if (open) {
@@ -372,10 +327,6 @@ async function checkPending() {
     const last = open.samples.at(-1)!;
     $('resumeInfo').textContent = `${new Date(open.samples[0].t).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })} · ${fmt(last.dist / 1000, 1)} km · ${fmtTime(open.samples.length)}`;
     $('resumeBox').hidden = false; $('btnGo').textContent = 'Weiterfahren';
-  }
-  // fertige, aber nicht hochgeladene echte Fahrten still nachholen
-  if (strava.connected && strava.auto) for (const r of rides) if (r.finished && !r.simulated && r.upload?.status !== 'ok' && r.samples.length >= 60) {
-    try { const rec = new Recorder(); rec.samples = r.samples; const id = await strava.upload(buildFit(rec), `Hausrunde ${new Date(r.samples[0].t).toLocaleDateString('de-DE')} – Sauerland Indoor`, `sauerland-${r.id.replace(/[:.]/g, '-')}`); r.upload = { status: 'ok', activityId: id }; await saveRide(r); toast('Frühere Fahrt nachträglich zu Strava hochgeladen'); } catch { /* später erneut */ }
   }
 }
 $('btnResume').onclick = () => { toast(trainer ? 'Mit „Weiterfahren“ geht es an der gespeicherten Stelle weiter' : 'Erst Trainer (oder Simulator) verbinden, dann „Weiterfahren“'); };

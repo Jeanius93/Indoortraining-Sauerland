@@ -93,7 +93,10 @@ async function fetchBin(base: string, name: string): Promise<ArrayBuffer> {
     return out.buffer;
   }
   const r = await fetch(`${base}/${file}`); if (!r.ok) throw new Error(`${file}: ${r.status}`);
-  return r.arrayBuffer();
+  const buf = await r.arrayBuffer(), u = new Uint8Array(buf, 0, 2);
+  // gzip-gepackt veröffentlicht (spart ~60 % Ladezeit) → im Browser entpacken
+  if (u[0] === 0x1f && u[1] === 0x8b) return new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+  return buf;
 }
 
 export async function loadRoute(base: string, onProgress?: (msg: string) => void, opts: { fine?: boolean } = {}) {

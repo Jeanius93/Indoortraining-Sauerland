@@ -11,8 +11,8 @@ Indoortraining im Browser auf den eigenen Hausstrecken – mit 3D-Avatar, Frei- 
 - **3D-Welt der echten Strecke:** Gelände aus Höhendaten, Straße, Wald, Radfahrer-Avatar, der im Takt der echten Trittfrequenz tritt
 - Kameras: Verfolger, Seite, Ego, Drohne
 - **Controller-Bedienung** (z. B. MSI Claw): Steuerkreuz ↑/↓ = Wert ±, LB/RB = Kamera, A/Start = Pause, Y = Modus wechseln
-- **Strava-Direktupload** nach jeder Fahrt (eigene Strava-API-Anwendung, Einrichtung auf dem Startbildschirm), sonst **FIT-Export** als „Virtuelle Radfahrt“
-- **Fahrt geht nicht verloren:** alle 5 s im Browser gesichert; Trainer und Pulsgurt verbinden sich bei Abbruch selbst neu (Fahrt pausiert solange); nach Absturz/Neuladen „Weiterfahren“ oder „Beenden & speichern“; fehlgeschlagene Uploads werden beim nächsten Start nachgeholt
+- **FIT-Datei** wird nach jeder Fahrt automatisch in „Downloads“ gespeichert (für Strava, Garmin Connect & Co., als „Virtuelle Radfahrt“)
+- **Fahrt geht nicht verloren:** alle 5 s im Browser gesichert; Trainer und Pulsgurt verbinden sich bei Abbruch selbst neu (Fahrt pausiert solange); nach Absturz/Neuladen „Weiterfahren“ oder „Beenden & speichern“
 - **Simulator:** ohne Trainer ausprobieren (z. B. am Handy)
 - **Ortsauswahl:** Startpunkt per Karte, Höhenprofil oder Liste (Straßen- und Ortsnamen) wählen; im Simulator auch während der Fahrt springen
 
@@ -75,7 +75,9 @@ weiter weg zu Gruppen zusammengefasst. Spitze Kronen gelten als Nadelbäume.
 
 ## Veröffentlichen (GitHub Pages)
 
-Unter *Settings → Pages → Source* „GitHub Actions“ wählen. Jeder Push auf `main` baut und veröffentlicht die App.
+`npm run deploy` baut die App in den Ordner `docs/` (große Daten gzip-gepackt). Auf GitHub unter
+*Settings → Pages*: „Deploy from a branch“, Branch auswählen, Ordner **`/docs`**.
+Alternativ baut der Workflow `.github/workflows/pages.yml` bei jedem Push auf `main` (Source „GitHub Actions“).
 Web Bluetooth braucht HTTPS – GitHub Pages liefert das mit.
 
 ## Geplant

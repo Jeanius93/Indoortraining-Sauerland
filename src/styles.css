@@ -184,3 +184,15 @@ h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .12em; text-transform: up
 .upload.ok { border-color: var(--z3); } .upload.err { border-color: var(--danger); }
 #lostBanner { position: fixed; left: 50%; top: calc(var(--safe-t) + 80px); transform: translateX(-50%); z-index: 45; background: #8a1f17; color: #fff; border-radius: 12px; padding: 12px 18px; font-weight: 600; max-width: calc(100% - 32px); text-align: center; }
 @media (max-width: 520px) { .strava-form { grid-template-columns: 1fr; } }
+
+/* Startknopf immer sichtbar; kompakter auf niedrigen Bildschirmen (MSI Claw, Laptop) */
+#btnGo { position: sticky; bottom: max(10px, env(safe-area-inset-bottom, 0px)); z-index: 5; box-shadow: 0 8px 28px rgba(0,0,0,.55); }
+@media (max-height: 820px) {
+  .sheet-inner { gap: 12px; padding-block: 10px 16px; }
+  h1 { font-size: 40px; }
+  #routeThumb { aspect-ratio: 640 / 90; }
+  .route-info { padding: 8px 14px 10px; gap: 6px; }
+  .route-info dd { font-size: 22px; }
+  .dev, .seg-btn { padding: 9px 12px; }
+  .seg-btn b { font-size: 19px; }
+}
