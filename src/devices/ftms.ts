@@ -22,33 +22,65 @@ export function parseIndoorBikeData(dv: DataView): TrainerData {
   return d;
 }
 
+/** Hält eine Bluetooth-Verbindung: verbindet bei Abbruch selbstständig neu (alle 2–10 s, unbegrenzt bis disconnect()). */
+class Link {
+  private closed = false; private retrying = false;
+  onLost: () => void = () => {};
+  onBack: () => void = () => {};
+  constructor(readonly device: BluetoothDevice, private setup: () => Promise<void>) {
+    device.addEventListener('gattserverdisconnected', () => { if (!this.closed) { this.onLost(); void this.retry(); } });
+  }
+  private async retry() {
+    if (this.retrying) return; this.retrying = true;
+    for (let attempt = 0; !this.closed; attempt++) {
+      await new Promise(r => setTimeout(r, Math.min(10000, 2000 + attempt * 1000)));
+      if (this.closed) break;
+      try { await this.setup(); this.retrying = false; this.onBack(); return; } catch { /* erneut versuchen */ }
+    }
+    this.retrying = false;
+  }
+  close() { this.closed = true; this.device.gatt?.disconnect(); }
+}
+
 export class FtmsTrainer implements Trainer {
   readonly simulated = false;
   onData: (d: TrainerData) => void = () => {};
   onDisconnect: () => void = () => {};
+  onReconnect: () => void = () => {};
   private queue: Promise<unknown> = Promise.resolve();
   private lastSim = '';
+  private cp!: BluetoothRemoteGATTCharacteristic;
+  private link: Link;
 
-  private constructor(private device: BluetoothDevice, private cp: BluetoothRemoteGATTCharacteristic) {}
+  private constructor(private device: BluetoothDevice) {
+    this.link = new Link(device, () => this.setup());
+    this.link.onLost = () => this.onDisconnect();
+    this.link.onBack = () => this.onReconnect();
+  }
 
   get name() { return this.device.name ?? 'Smarttrainer'; }
 
   static async connect(): Promise<FtmsTrainer> {
     const device = await navigator.bluetooth.requestDevice({ filters: [{ services: [FTMS] }] });
-    const server = await device.gatt!.connect();
+    const t = new FtmsTrainer(device);
+    await t.setup();
+    return t;
+  }
+
+  /** GATT verbinden, Daten abonnieren, Steuerung übernehmen (auch beim Neuverbinden) */
+  private async setup() {
+    const server = await this.device.gatt!.connect();
     const svc = await server.getPrimaryService(FTMS);
     const data = await svc.getCharacteristic(INDOOR_BIKE_DATA);
-    const cp = await svc.getCharacteristic(CONTROL_POINT);
-    const t = new FtmsTrainer(device, cp);
-    device.addEventListener('gattserverdisconnected', () => t.onDisconnect());
+    this.cp = await svc.getCharacteristic(CONTROL_POINT);
     data.addEventListener('characteristicvaluechanged', e => {
-      const v = (e.target as BluetoothRemoteGATTCharacteristic).value; if (v) t.onData(parseIndoorBikeData(v));
+      const v = (e.target as BluetoothRemoteGATTCharacteristic).value; if (v) this.onData(parseIndoorBikeData(v));
     });
     await data.startNotifications();
-    await cp.startNotifications(); // Indications für Antworten
-    await t.write([0x00]);        // Steuerung anfordern
-    await t.write([0x07]);        // Start/Fortsetzen
-    return t;
+    await this.cp.startNotifications(); // Indications für Antworten
+    this.queue = Promise.resolve(); this.lastSim = '';
+    await this.write([0x00]);           // Steuerung anfordern
+    await this.write([0x07]);           // Start/Fortsetzen
   }
 
   private write(bytes: number[]) {
@@ -71,25 +103,34 @@ export class FtmsTrainer implements Trainer {
     return this.write(bytes);
   }
 
-  disconnect() { this.device.gatt?.disconnect(); }
+  disconnect() { this.link.close(); }
 }
 
 export class HeartRateMonitor {
   onHr: (bpm: number) => void = () => {};
-  private constructor(private device: BluetoothDevice) {}
+  onLost: () => void = () => {};
+  onBack: () => void = () => {};
+  private link: Link;
+  private constructor(private device: BluetoothDevice) {
+    this.link = new Link(device, () => this.setup());
+    this.link.onLost = () => this.onLost(); this.link.onBack = () => this.onBack();
+  }
   get name() { return this.device.name ?? 'Pulsgurt'; }
 
   static async connect() {
     const device = await navigator.bluetooth.requestDevice({ filters: [{ services: ['heart_rate'] }] });
-    const svc = await (await device.gatt!.connect()).getPrimaryService('heart_rate');
-    const ch = await svc.getCharacteristic('heart_rate_measurement');
     const m = new HeartRateMonitor(device);
-    ch.addEventListener('characteristicvaluechanged', e => {
-      const v = (e.target as BluetoothRemoteGATTCharacteristic).value!;
-      m.onHr(v.getUint8(0) & 1 ? v.getUint16(1, true) : v.getUint8(1));
-    });
-    await ch.startNotifications();
+    await m.setup();
     return m;
   }
-  disconnect() { this.device.gatt?.disconnect(); }
+  private async setup() {
+    const svc = await (await this.device.gatt!.connect()).getPrimaryService('heart_rate');
+    const ch = await svc.getCharacteristic('heart_rate_measurement');
+    ch.addEventListener('characteristicvaluechanged', e => {
+      const v = (e.target as BluetoothRemoteGATTCharacteristic).value!;
+      this.onHr(v.getUint8(0) & 1 ? v.getUint16(1, true) : v.getUint8(1));
+    });
+    await ch.startNotifications();
+  }
+  disconnect() { this.link.close(); }
 }

@@ -11,7 +11,8 @@ Indoortraining im Browser auf den eigenen Hausstrecken – mit 3D-Avatar, Frei- 
 - **3D-Welt der echten Strecke:** Gelände aus Höhendaten, Straße, Wald, Radfahrer-Avatar, der im Takt der echten Trittfrequenz tritt
 - Kameras: Verfolger, Seite, Ego, Drohne
 - **Controller-Bedienung** (z. B. MSI Claw): Steuerkreuz ↑/↓ = Wert ±, LB/RB = Kamera, A/Start = Pause, Y = Modus wechseln
-- **FIT-Export** als „Virtuelle Radfahrt“ inkl. GPS-Spur → bei Strava hochladen
+- **Strava-Direktupload** nach jeder Fahrt (eigene Strava-API-Anwendung, Einrichtung auf dem Startbildschirm), sonst **FIT-Export** als „Virtuelle Radfahrt“
+- **Fahrt geht nicht verloren:** alle 5 s im Browser gesichert; Trainer und Pulsgurt verbinden sich bei Abbruch selbst neu (Fahrt pausiert solange); nach Absturz/Neuladen „Weiterfahren“ oder „Beenden & speichern“; fehlgeschlagene Uploads werden beim nächsten Start nachgeholt
 - **Simulator:** ohne Trainer ausprobieren (z. B. am Handy)
 - **Ortsauswahl:** Startpunkt per Karte, Höhenprofil oder Liste (Straßen- und Ortsnamen) wählen; im Simulator auch während der Fahrt springen
 
@@ -79,6 +80,5 @@ Web Bluetooth braucht HTTPS – GitHub Pages liefert das mit.
 
 ## Geplant
 
-- Direkter Strava-Upload (OAuth)
 - Luftbilder (DOP20) als Bodentextur, Gewässer, Nebenstraßen
 - Ghost-Rider (eigene Bestzeit), Segmente, Streckenauswahl, `.zwo`-Workout-Import

@@ -165,3 +165,22 @@ h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .12em; text-transform: up
 @keyframes pulse { 50% { opacity: .4; } }
 #toast { position: fixed; left: 50%; top: calc(var(--safe-t) + 120px); transform: translateX(-50%); background: var(--glass-strong); border: 1px solid var(--line); border-radius: 999px; padding: 8px 16px; font-size: 14px; z-index: 40; max-width: calc(100% - 32px); text-align: center; }
 @media (prefers-reduced-motion: reduce) { #loading span { animation: none; } }
+
+/* ---------- Fahrt fortsetzen, Strava, Upload ---------- */
+.resume { background: rgba(255,181,71,.12); border: 1px solid var(--accent); border-radius: 12px; padding: 12px 14px; display: grid; gap: 10px; }
+.resume > div:first-child { display: grid; gap: 2px; } .resume span { color: var(--ink-dim); font-size: 14px; }
+.resume-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.strava { display: grid; gap: 8px; background: var(--glass-strong); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; }
+.strava p { margin: 0; }
+.strava code { color: var(--accent); }
+.strava-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
+.strava-form .field { margin: 0; }
+.strava-form input { width: 100%; min-width: 0; background: var(--glass-strong); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; font-size: 16px; text-transform: none; letter-spacing: 0; color: var(--ink); }
+.check { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.check input { width: 20px; height: 20px; accent-color: #fc5200; }
+#btnStravaOn { background: #fc5200; border-color: #fc5200; color: #fff; }
+.upload { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; background: var(--glass-strong); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; font-size: 15px; }
+.upload a { color: #fc5200; font-weight: 600; }
+.upload.ok { border-color: var(--z3); } .upload.err { border-color: var(--danger); }
+#lostBanner { position: fixed; left: 50%; top: calc(var(--safe-t) + 80px); transform: translateX(-50%); z-index: 45; background: #8a1f17; color: #fff; border-radius: 12px; padding: 12px 18px; font-weight: 600; max-width: calc(100% - 32px); text-align: center; }
+@media (max-width: 520px) { .strava-form { grid-template-columns: 1fr; } }

@@ -63,6 +63,15 @@
       <h1>Sauerland Indoor</h1>
     </header>
 
+    <div class="resume" id="resumeBox" hidden>
+      <div><b>Unterbrochene Fahrt gefunden</b><span id="resumeInfo"></span></div>
+      <div class="resume-actions">
+        <button id="btnResume" class="chip on">Weiterfahren</button>
+        <button id="btnResumeEnd" class="chip">Beenden &amp; speichern</button>
+        <button id="btnResumeDrop" class="chip danger">Verwerfen</button>
+      </div>
+    </div>
+
     <article class="route-card">
       <canvas id="routeThumb" width="640" height="150" aria-label="Höhenprofil der Strecke"></canvas>
       <div class="route-info">
@@ -98,6 +107,23 @@
       </label>
     </div>
 
+    <div class="group">
+      <h3>Strava</h3>
+      <div id="stravaOn" class="strava" hidden>
+        <p><b id="stravaWho">Verbunden</b></p>
+        <label class="check"><input type="checkbox" id="stravaAuto" checked> Fahrten nach dem Beenden automatisch hochladen</label>
+        <button id="btnStravaOff" class="chip">Trennen</button>
+      </div>
+      <div id="stravaOff" class="strava">
+        <p class="small">Einmalig einrichten: Auf <b>strava.com/settings/api</b> eine Anwendung anlegen (Name z. B. „Sauerland Indoor“, Website und <b>Autorisierungs-Callback-Domain</b>: <code id="stravaDomain"></code>). Dann Client-ID und Client-Secret hier eintragen. Beides bleibt nur auf diesem Gerät.</p>
+        <div class="strava-form">
+          <label class="field">Client-ID <input id="stravaId" inputmode="numeric" autocomplete="off"></label>
+          <label class="field">Client-Secret <input id="stravaSecret" type="password" autocomplete="off"></label>
+          <button id="btnStravaOn" class="chip on">Mit Strava verbinden</button>
+        </div>
+      </div>
+    </div>
+
     <div class="group fields">
       <label class="field">FTP <span><input id="inFtp" type="number" min="80" max="500" value="250"> W</span></label>
       <label class="field">Gewicht <span><input id="inKg" type="number" min="35" max="150" value="80"> kg</span></label>
@@ -116,6 +142,7 @@
   <div class="sheet-inner">
     <header class="brand"><span class="eyebrow">Fahrt beendet</span><h1 id="doneTitle">Gut gefahren!</h1></header>
     <dl class="summary" id="summary"></dl>
+    <div class="upload" id="uploadBox"><span id="uploadStatus">–</span><a id="uploadLink" target="_blank" rel="noopener" hidden>Auf Strava ansehen ↗</a><button id="btnUpload" class="chip" hidden>Erneut hochladen</button></div>
     <button id="btnFit" class="go">FIT-Datei speichern</button>
     <a class="go ghost" href="https://www.strava.com/upload/select" target="_blank" rel="noopener">Bei Strava hochladen ↗</a>
     <p class="small" id="fitHint">Die FIT-Datei bei Strava unter „Hochladen → Datei“ auswählen. Sie erscheint als „Virtuelle Radfahrt“ mit deiner Strecke auf der Karte.</p>
@@ -139,6 +166,7 @@
 
 <div id="loading"><span>Sauerland wird aufgebaut …</span></div>
 <div id="toast" role="status" hidden></div>
+<div id="lostBanner" role="alert" hidden>Verbindung zum Trainer verloren – verbinde neu … Die Fahrt ist gesichert und pausiert.</div>
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

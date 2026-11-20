@@ -10,6 +10,7 @@ export interface Trainer {
   readonly simulated: boolean;
   onData: (d: TrainerData) => void;
   onDisconnect: () => void;
+  onReconnect?: () => void;
   setErg(watts: number): Promise<void>;
   setSim(gradePct: number, crr: number, cwKgPerM: number): Promise<void>;
   disconnect(): void;

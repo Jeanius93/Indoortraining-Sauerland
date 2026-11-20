@@ -11,6 +11,8 @@ import { buildFit } from './fit';
 import { ProfileChart, MiniMap, drawWorkout, gradeColor, zoneColor } from './ui/charts';
 import { GamepadInput, type PadAction } from './ui/gamepad';
 import { PlacePicker, placeList, placeLabel } from './ui/places';
+import { saveRide, deleteRide, listRides, pruneRides, type StoredRide } from './storage';
+import { strava } from './strava';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const fmt = (n: number, d = 0) => n.toLocaleString('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -29,6 +31,7 @@ const settings = loadSettings();
 // ---------- Zustand ----------
 let route: Route, world: World, profile: ProfileChart, minimap: MiniMap, picker: PlacePicker;
 let chosenStart: number | null = null;
+let rideId = '', rideSimulated = false, trainerLost = false, lastSave = 0, resumeRide: StoredRide | null = null;
 let trainer: Trainer | null = null, hrm: HeartRateMonitor | null = null;
 let power = 0, cadence = 0, hr: number | undefined, hrFromStrap = false;
 let running = false, paused = false;
@@ -75,6 +78,7 @@ async function init() {
   updateStartLabel();
   $('loading').hidden = true;
   requestAnimationFrame(loop);
+  void checkPending();
 }
 
 function onResize() { world?.resize(innerWidth, innerHeight); }
@@ -93,7 +97,17 @@ function attachTrainer(t: Trainer) {
     if (d.cadence !== undefined) cadence = d.cadence;
     if (d.hr && !hrFromStrap) hr = d.hr;
   };
-  t.onDisconnect = () => { toast('Trainer getrennt – bitte neu verbinden'); setDev('btnTrainer', 'getrennt', 'err'); power = 0; cadence = 0; };
+  t.onDisconnect = () => {
+    trainerLost = true; power = 0; cadence = 0;
+    setDev('btnTrainer', 'verbinde neu …', 'err');
+    if (running) { $('lostBanner').hidden = false; persist(true); }
+  };
+  t.onReconnect = () => {
+    trainerLost = false; $('lostBanner').hidden = true;
+    setDev('btnTrainer', `verbunden: ${t.name}`, 'ok');
+    nextSimSend = 0; applyMode();
+    if (running) toast('Trainer wieder verbunden – weiter geht’s');
+  };
   $<HTMLButtonElement>('btnGo').disabled = false;
   applyMode();
 }
@@ -124,6 +138,8 @@ $('btnHr').onclick = async () => {
   try {
     hrm?.disconnect(); hrm = await HeartRateMonitor.connect(); hrFromStrap = true;
     hrm.onHr = b => { hr = b; };
+    hrm.onLost = () => { hr = undefined; setDev('btnHr', 'verbinde neu …', 'err'); if (running) toast('Pulsgurt getrennt – verbinde neu …'); };
+    hrm.onBack = () => { setDev('btnHr', `verbunden: ${hrm!.name}`, 'ok'); if (running) toast('Pulsgurt wieder verbunden'); };
     setDev('btnHr', `verbunden: ${hrm.name}`, 'ok');
   } catch (e) { btError(e, 'btnHr'); }
 };
@@ -236,16 +252,26 @@ $('btnGo').onclick = async () => {
   $('start').hidden = true; $('hud').hidden = false;
   running = true; paused = false;
   dist = startDist(); speed = 0; elapsed = 0; lastSampleSec = -1; ergBias = 0; recorder = new Recorder();
+  rideId = new Date().toISOString(); rideSimulated = trainer.simulated; trainerLost = false;
+  if (resumeRide) {           // unterbrochene Fahrt fortsetzen
+    recorder.samples = resumeRide.samples; rideId = resumeRide.id; rideSimulated = resumeRide.simulated && trainer.simulated;
+    const lastS = recorder.samples.at(-1); dist = lastS?.dist ?? 0; elapsed = recorder.samples.length; lastSampleSec = Math.floor(elapsed);
+    resumeRide = null; $('resumeBox').hidden = true; $('btnGo').textContent = 'Losfahren';
+    world.snapCamera();
+  }
   ergTarget = Math.round(settings.ftp * 0.65 / 5) * 5;
   applyMode();
   $('btnPlaces').hidden = !trainer.simulated;
   onResize();
   try { wakeLock = await (navigator as unknown as { wakeLock?: { request(t: string): Promise<{ release(): Promise<void> }> } }).wakeLock?.request('screen') ?? null; } catch { /* optional */ }
+  addEventListener('beforeunload', warnUnload);
+  void persist(true);
   toast(trainer.simulated ? 'Simulator: Leistung unten einstellen' : 'Gute Fahrt!');
 };
 
 function finish() {
   if (!running) return;
+  removeEventListener('beforeunload', warnUnload);
   running = false;
   wakeLock?.release().catch(() => {}); wakeLock = null;
   if (trainer && !trainer.simulated) trainer.setErg(0).catch(() => {});
@@ -260,6 +286,8 @@ function finish() {
   $('summary').innerHTML = rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('');
   $('doneTitle').textContent = dist >= route.length - 1 ? 'Runde geschafft!' : 'Gut gefahren!';
   $<HTMLButtonElement>('btnFit').disabled = !s || s.duration < 10;
+  void persist(true, true).then(() => { if (s && s.duration >= 60) void autoUpload(); else setUpload('Fahrt zu kurz zum Hochladen (unter 1 Minute)', ''); });
+  $('lostBanner').hidden = true;
   if (trainer?.simulated) $('fitHint').textContent = 'Hinweis: Diese Fahrt stammt aus dem Simulator – zum Testen gut, für Strava eher nicht. ' + $('fitHint').textContent;
 }
 
@@ -275,6 +303,89 @@ $('btnFit').onclick = () => {
   } catch (e) { toast(`FIT-Export fehlgeschlagen: ${(e as Error).message}`); }
 };
 $('btnAgain').onclick = () => { $('done').hidden = true; $('start').hidden = false; dist = startDist(); world.snapCamera(); };
+
+// ---------- Sicherung der Fahrt ----------
+const warnUnload = (e: BeforeUnloadEvent) => { persist(true); e.preventDefault(); e.returnValue = ''; };
+function persist(force = false, finished = false) {
+  if (!rideId || !recorder.samples.length) return Promise.resolve();
+  const now = Date.now();
+  if (!force && now - lastSave < 5000) return Promise.resolve();
+  lastSave = now;
+  return saveRide({ id: rideId, route: 'hausrunde', samples: recorder.samples, finished, simulated: rideSimulated, upload: finished ? { status: 'pending' } : undefined });
+}
+addEventListener('pagehide', () => { if (running) persist(true); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && running) persist(true); });
+
+// ---------- Strava ----------
+function setUpload(text: string, cls: '' | 'ok' | 'err', link?: string, retry = false) {
+  $('uploadStatus').textContent = text;
+  $('uploadBox').className = `upload ${cls}`;
+  const a = $<HTMLAnchorElement>('uploadLink'); a.hidden = !link; if (link) a.href = link;
+  $('btnUpload').hidden = !retry;
+}
+async function uploadRide(r: StoredRide) {
+  const rec = new Recorder(); rec.samples = r.samples;
+  const start = new Date(r.samples[0].t);
+  const name = `Hausrunde ${start.toLocaleDateString('de-DE')} – Sauerland Indoor`;
+  try {
+    const id = await strava.upload(buildFit(rec), name, `sauerland-${r.id.replace(/[:.]/g, '-')}`, msg => setUpload(msg, ''));
+    r.upload = { status: 'ok', activityId: id }; await saveRide(r); void pruneRides();
+    setUpload('Auf Strava hochgeladen ✓', 'ok', `https://www.strava.com/activities/${id}`);
+  } catch (e) {
+    r.upload = { status: 'error', message: (e as Error).message }; await saveRide(r);
+    setUpload(`Hochladen fehlgeschlagen: ${(e as Error).message}. Die Fahrt ist gesichert – „Erneut hochladen“ oder FIT-Datei speichern.`, 'err', undefined, true);
+  }
+}
+async function autoUpload() {
+  const r = (await listRides()).find(x => x.id === rideId);
+  if (!r) return;
+  if (r.simulated) { setUpload('Simulator-Fahrt – wird nicht automatisch hochgeladen', '', undefined, strava.connected); return; }
+  if (!strava.connected) { setUpload('Nicht mit Strava verbunden – FIT-Datei speichern oder auf dem Startbildschirm Strava verbinden', ''); return; }
+  if (!strava.auto) { setUpload('Automatisches Hochladen ist aus', '', undefined, true); return; }
+  await uploadRide(r);
+}
+$('btnUpload').onclick = async () => { const r = (await listRides()).find(x => x.id === rideId); if (r) await uploadRide(r); };
+function renderStrava() {
+  const c = strava.config;
+  $('stravaOn').hidden = !strava.connected; $('stravaOff').hidden = strava.connected;
+  $('stravaWho').textContent = `Verbunden${c?.athlete ? ` als ${c.athlete}` : ''}`;
+  $<HTMLInputElement>('stravaAuto').checked = strava.auto;
+  $('stravaDomain').textContent = location.hostname || 'jeanius93.github.io';
+  if (c?.clientId) $<HTMLInputElement>('stravaId').value = c.clientId;
+}
+$('btnStravaOn').onclick = () => {
+  const id = $<HTMLInputElement>('stravaId').value, sec = $<HTMLInputElement>('stravaSecret').value || strava.config?.clientSecret || '';
+  if (!/^\d+$/.test(id.trim()) || sec.trim().length < 20) { toast('Bitte Client-ID (Zahl) und Client-Secret von strava.com/settings/api eintragen'); return; }
+  strava.connect(id, sec);
+};
+$('btnStravaOff').onclick = () => { strava.disconnect(); renderStrava(); toast('Strava getrennt'); };
+$<HTMLInputElement>('stravaAuto').onchange = e => strava.setAuto((e.target as HTMLInputElement).checked);
+
+/** Beim Start: Rückkehr von Strava verarbeiten, unterbrochene/nicht hochgeladene Fahrten anbieten */
+async function checkPending() {
+  try { const msg = await strava.finishConnect(); if (msg) toast(msg, 4000); } catch (e) { toast(`Strava: ${(e as Error).message}`, 6000); }
+  renderStrava();
+  const rides = await listRides();
+  const open = rides.find(r => !r.finished && r.samples.length >= 30);
+  if (open) {
+    resumeRide = open;
+    const last = open.samples.at(-1)!;
+    $('resumeInfo').textContent = `${new Date(open.samples[0].t).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })} · ${fmt(last.dist / 1000, 1)} km · ${fmtTime(open.samples.length)}`;
+    $('resumeBox').hidden = false; $('btnGo').textContent = 'Weiterfahren';
+  }
+  // fertige, aber nicht hochgeladene echte Fahrten still nachholen
+  if (strava.connected && strava.auto) for (const r of rides) if (r.finished && !r.simulated && r.upload?.status !== 'ok' && r.samples.length >= 60) {
+    try { const rec = new Recorder(); rec.samples = r.samples; const id = await strava.upload(buildFit(rec), `Hausrunde ${new Date(r.samples[0].t).toLocaleDateString('de-DE')} – Sauerland Indoor`, `sauerland-${r.id.replace(/[:.]/g, '-')}`); r.upload = { status: 'ok', activityId: id }; await saveRide(r); toast('Frühere Fahrt nachträglich zu Strava hochgeladen'); } catch { /* später erneut */ }
+  }
+}
+$('btnResume').onclick = () => { toast(trainer ? 'Mit „Weiterfahren“ geht es an der gespeicherten Stelle weiter' : 'Erst Trainer (oder Simulator) verbinden, dann „Weiterfahren“'); };
+$('btnResumeDrop').onclick = async () => { if (resumeRide) await deleteRide(resumeRide.id); resumeRide = null; $('resumeBox').hidden = true; $('btnGo').textContent = 'Losfahren'; };
+$('btnResumeEnd').onclick = async () => {
+  if (!resumeRide) return;
+  recorder = new Recorder(); recorder.samples = resumeRide.samples; rideId = resumeRide.id; rideSimulated = resumeRide.simulated;
+  dist = recorder.samples.at(-1)!.dist; resumeRide = null; $('resumeBox').hidden = true; $('btnGo').textContent = 'Losfahren';
+  running = true; $('start').hidden = true; finish();
+};
 
 // Startpunkt per Adresse wählbar, z. B. ?km=12.5 (zum Testen einzelner Abschnitte)
 function startDist() {
@@ -314,7 +425,8 @@ function loop(now: number) {
   const prevPhysics = lastPhysics; lastPhysics = now;
   pad.poll(now);
   const grade = route.gradeAt(dist);
-  if (running && !paused) {
+  const stalled = trainerLost && !!trainer && !trainer.simulated;   // Verbindung weg → Fahrt pausiert
+  if (running && !paused && !stalled) {
     // Physik in Echtzeit, auch bei niedriger Bildrate (Teilschritte à max. 50 ms)
     const p = trainer ? power : 0, realDt = Math.min(1, (now - prevPhysics) / 1000);
     for (let left = realDt; left > 1e-6; left -= 0.05) {
@@ -337,9 +449,11 @@ function loop(now: number) {
       lastSampleSec = sec;
       const [lat, lon] = route.toLatLon(route.xAt(dist), route.yAt(dist));
       recorder.add({ t: Date.now(), dist, speed, power: trainer ? power : 0, cadence, hr, lat, lon, alt: route.hAt(dist) });
+      void persist();
     }
     if (dist >= route.length) finish();
-  } else if (running && paused) {
+  } else if (running && (paused || stalled)) {
+    if (stalled) lastPhysics = now;
     speed = Math.max(0, speed - dt * 3);
   }
   const shownCad = running && !paused ? cadence : 0;
