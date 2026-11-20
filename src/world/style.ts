@@ -11,9 +11,9 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 
-export const LOOKS = ['real', 'game', 'toon', 'neon', 'diorama'] as const;
+export const LOOKS = ['real', 'game', 'toon', 'neon', 'diorama', 'cinema'] as const;
 export type Look = typeof LOOKS[number];
-export const usesPhoto = (l: Look) => l === 'real' || l === 'game';
+export const usesPhoto = (l: Look) => l === 'real' || l === 'game' || l === 'cinema';
 
 export interface Layers { terrain: THREE.Object3D[]; roads: THREE.Object3D[]; buildings: THREE.Object3D[]; trees: THREE.Object3D[]; grass: THREE.Object3D[]; other: THREE.Object3D[] }
 export interface LookTarget {
@@ -126,6 +126,17 @@ export function applyLook(look: Look, t: LookTarget): EffectComposer | null {
     bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.35, 0.5, 0.82);
     u.saturation.value = 1.18; u.contrast.value = 1.12; u.vignette.value = 0.45; u.tint.value = new THREE.Color(1.04, 1.0, 0.94);
     t.sun.intensity = 3.0;
+  }
+
+  if (look === 'cinema') {
+    // Filmischer Abend-Look: warmes Gegenlicht, Dunst, Teal-Orange-Farbkorrektur, starke Glanzlichter
+    const su = (t.sky.material as THREE.ShaderMaterial).uniforms;
+    su.zenith.value = new THREE.Color('#2c5d9c'); su.horizon.value = new THREE.Color('#f6b98a'); su.coverage.value = 0.52;
+    const haze = new THREE.Color('#e7b48f'); scene.background = haze; fog.color.copy(haze); fog.near = 120; fog.far = 3200;
+    t.sun.color.set('#ffb36b'); t.sun.intensity = 3.6; t.hemi.color.set('#9fb8ff'); t.hemi.groundColor.set('#6b4a35'); t.hemi.intensity = 1.0;
+    renderer.toneMappingExposure = 1.15;
+    bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.6, 0.7, 0.7);
+    u.saturation.value = 1.3; u.contrast.value = 1.22; u.brightness.value = -0.02; u.vignette.value = 0.65; u.tint.value = new THREE.Color(1.1, 0.97, 0.86);
   }
 
   if (look === 'toon' || look === 'diorama') {
