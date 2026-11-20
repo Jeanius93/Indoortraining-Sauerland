@@ -18,6 +18,7 @@ export interface RouteData {
     canopy: boolean;
   };
   landuse?: { px: number; w: number; h: number; classes: Record<string, string> };
+  chimneys?: number[][];
   places?: { d: number; road: string | null; area: string | null }[];
   surface?: { from: number; to: number; type: 'radweg' }[];
   width?: number[];   // echte Fahrbahnbreite je Streckenpunkt (m)
@@ -25,10 +26,11 @@ export interface RouteData {
 
 /** Echte Weltdaten (Geobasis NRW), falls für die Strecke vorhanden */
 export interface WorldData {
-  buildings?: { pos: Uint16Array; col: Uint8Array };
+  buildings?: { pos: Uint16Array; col: Uint8Array; ext?: { u: Uint16Array; base: Uint16Array; meta: Uint8Array } };
   trees?: Uint8Array;
   canopy?: Uint8Array;
   landuse?: Uint8Array;
+  houses?: import('./world/houses').HouseData;
   rawHeights?: Int16Array; // Gelände ohne eingeschnittene Straße (für glatte Beleuchtung)
   sideRoads?: { w: number[]; p: number[][] }[]; // abzweigende Straßen [x, y, h]
   furniture?: import('./world/furniture').FurnitureData;
@@ -99,17 +101,24 @@ async function fetchBin(base: string, name: string): Promise<ArrayBuffer> {
   return buf;
 }
 
-export async function loadRoute(base: string, onProgress?: (msg: string) => void, opts: { fine?: boolean } = {}) {
+export async function loadRoute(base: string, onProgress?: (msg: string) => void, opts: { fine?: boolean; photo?: boolean } = {}) {
   const data = await fetch(`${base}/route.json`).then(r => { if (!r.ok) throw new Error(`route.json: ${r.status}`); return r.json() as Promise<RouteData>; });
   onProgress?.('Gelände wird geladen …');
   const heights = new Int16Array(await fetchBin(base, 'terrain'));
   const world: WorldData = {};
+  // Neuer Stil: Häuser aus houses.json (klein) statt LoD2-Dreiecken, keine Luftbilder → deutlich schneller
+  if (!opts.photo) {
+    try {
+      const r = await fetch(`${base}/houses.json`);
+      if (r.ok && (r.headers.get('content-type') ?? '').includes('json')) world.houses = await r.json();
+    } catch { /* optional */ }
+  }
   if (data.world) {
-    onProgress?.(`${data.world.buildings.count.toLocaleString('de-DE')} Häuser und ${data.world.trees.count.toLocaleString('de-DE')} Bäume werden geladen …`);
-    // Kronendach nur nötig, wenn keine Nutzungskarte vorliegt
-    const [b, t, c] = await Promise.all([fetchBin(base, 'buildings'), fetchBin(base, 'trees'), data.landuse ? Promise.resolve(null) : fetchBin(base, 'canopy')]);
+    onProgress?.(`${(world.houses?.houses.length ?? data.world.buildings.count).toLocaleString('de-DE')} Häuser und ${data.world.trees.count.toLocaleString('de-DE')} Bäume werden geladen …`);
+    // Kronendach nur nötig, wenn keine Nutzungskarte vorliegt; LoD2-Gebäude nur ohne houses.json
+    const [b, t, c] = await Promise.all([world.houses ? Promise.resolve(null) : fetchBin(base, 'buildings'), fetchBin(base, 'trees'), data.landuse ? Promise.resolve(null) : fetchBin(base, 'canopy')]);
     const nV = data.world.buildings.vertices;
-    world.buildings = { pos: new Uint16Array(b, 0, nV * 3), col: new Uint8Array(b, nV * 6, data.world.buildings.rgb ? nV : nV / 3) };
+    if (b) world.buildings = { pos: new Uint16Array(b, 0, nV * 3), col: new Uint8Array(b, nV * 6, data.world.buildings.rgb ? nV : nV / 3) };
     world.trees = new Uint8Array(t);
     if (c) world.canopy = new Uint8Array(c);
     try { world.rawHeights = new Int16Array(await fetchBin(base, 'terrain_raw')); } catch { /* optional */ }
@@ -126,7 +135,7 @@ export async function loadRoute(base: string, onProgress?: (msg: string) => void
     const r = await fetch(`${base}/roads.json`);
     if (r.ok) world.sideRoads = (await r.json() as { roads: WorldData['sideRoads'] }).roads;
   } catch { /* optional */ }
-  try {
+  if (opts.photo) try {
     const r = await fetch(`${base}/ortho.json`);
     if (r.ok) {
       const man = await r.json() as { tiles: Record<string, number>; fine?: string[] };

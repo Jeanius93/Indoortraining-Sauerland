@@ -56,6 +56,9 @@ npm run build        # Produktions-Build nach dist/
 9. Dachfarben aus Luftbildern und Sehenswürdigkeiten (Talsperre, Aqua Magis, Türme, Hochspannung):
    `python3 scripts/prepare-roofs.py public/routes/meinestrecke && python3 scripts/prepare-landmarks.py public/routes/meinestrecke`
 
+10. Häuser im neuen Stil (sauberer Rechteck-Grundriss, Dachform, Höhen und Dachfarbe aus LoD2/Luftbild):
+   `python3 scripts/prepare-houses.py public/routes/meinestrecke`
+
 Benötigte Python-Pakete: `numpy pillow scipy scikit-image tifffile imagecodecs`
 
 ### Datenquellen
@@ -77,6 +80,8 @@ weiter weg zu Gruppen zusammengefasst. Spitze Kronen gelten als Nadelbäume.
 
 `npm run deploy` baut die App in den Ordner `docs/` (große Daten gzip-gepackt). Auf GitHub unter
 *Settings → Pages*: „Deploy from a branch“, Branch auswählen, Ordner **`/docs`**.
+Vorschau neuer Versionen ohne die Trainings-App zu ändern: `npm run build && node scripts/make-docs.mjs docs/vorschau --ohne-luftbild`
+→ `…/Indoortraining-Sauerland/docs/vorschau/`.
 Alternativ baut der Workflow `.github/workflows/pages.yml` bei jedem Push auf `main` (Source „GitHub Actions“).
 Web Bluetooth braucht HTTPS – GitHub Pages liefert das mit.
 

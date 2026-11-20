@@ -1,6 +1,7 @@
 import './styles.css';
 import { loadRoute, type Route } from './route';
 import { World } from './world/scene';
+import { ENS } from './world/lookflag';
 import { stepSpeed, defaultRider, type RiderSettings } from './physics';
 import { FtmsTrainer, HeartRateMonitor, bluetoothAvailable } from './devices/ftms';
 import { SimulatedTrainer } from './devices/simulator';
@@ -53,7 +54,7 @@ function toast(msg: string, ms = 2600) {
 
 // ---------- Start ----------
 async function init() {
-  const loaded = await loadRoute('routes/hausrunde', msg => { $('loading').firstElementChild!.textContent = msg; }, { fine: settings.quality === 'high' && import.meta.env.MODE !== 'artifact' });
+  const loaded = await loadRoute('routes/hausrunde', msg => { $('loading').firstElementChild!.textContent = msg; }, { fine: settings.quality === 'high' && import.meta.env.MODE !== 'artifact', photo: !ENS });
   route = loaded.route;
   $('loading').firstElementChild!.textContent = 'Sauerland wird aufgebaut …';
   // Schrift für Ortstafeln laden (höchstens 2 s warten)
