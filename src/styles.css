@@ -139,7 +139,7 @@ h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .12em; text-transform: up
 .seg-btn span { font-size: 13px; color: var(--ink-dim); }
 .seg-btn.on { border-color: var(--accent); background: rgba(255,181,71,.1); }
 .seg-btn.on b { color: var(--accent); }
-.fields { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.fields { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
 .field { display: grid; gap: 4px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-dim); margin-top: 8px; }
 .fields .field { margin: 0; }
 .field span { display: flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: 0; font-size: 15px; color: var(--ink); }

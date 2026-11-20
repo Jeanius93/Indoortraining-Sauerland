@@ -18,8 +18,8 @@ const fmtTime = (s: number) => { s = Math.floor(s); const h = Math.floor(s / 360
 const fmtMin = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 // ---------- Einstellungen ----------
-interface Settings { ftp: number; kg: number; difficulty: number; jersey: string; mode: 'sim' | 'erg'; workout: string }
-const defaults: Settings = { ftp: 250, kg: 80, difficulty: 50, jersey: '#d2412f', mode: 'sim', workout: 'free' };
+interface Settings { ftp: number; kg: number; difficulty: number; jersey: string; mode: 'sim' | 'erg'; workout: string; quality: 'auto' | 'high' | 'low' }
+const defaults: Settings = { ftp: 250, kg: 80, difficulty: 50, jersey: '#d2412f', mode: 'sim', workout: 'free', quality: 'auto' };
 function loadSettings(): Settings {
   try { return { ...defaults, ...JSON.parse(localStorage.getItem('sauerland.settings') ?? '{}') }; } catch { return { ...defaults }; }
 }
@@ -38,7 +38,10 @@ let recorder = new Recorder();
 let wakeLock: { release(): Promise<void> } | null = null;
 const rider = (): RiderSettings => ({ ...defaultRider, riderKg: settings.kg });
 const workout = (): Workout => workouts.find(w => w.id === settings.workout) ?? workouts[0];
-const quality: 'low' | 'high' = (matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 900) ? 'low' : 'high';
+// Grafikstufe: Einstellung > Adresse (?q=high) > automatisch (Handy = niedrig; Windows-Handhelds wie die Claw = hoch)
+const autoQuality = (): 'low' | 'high' => /Android|iPhone|iPad/i.test(navigator.userAgent) || (matchMedia('(pointer: coarse)').matches && !/Windows/i.test(navigator.userAgent) && Math.min(screen.width, screen.height) < 900) ? 'low' : 'high';
+const qParam = new URLSearchParams(location.search).get('q');
+const quality: 'low' | 'high' = qParam === 'high' || qParam === 'low' ? qParam : settings.quality !== 'auto' ? settings.quality : autoQuality();
 
 function toast(msg: string, ms = 2600) {
   const t = $('toast'); t.textContent = msg; t.hidden = false;
@@ -222,6 +225,8 @@ const bindNum = (id: string, key: 'ftp' | 'kg' | 'difficulty') => {
   el.onchange = () => { const v = Number(el.value); if (Number.isFinite(v) && v > 0 || key === 'difficulty') { settings[key] = v; saveSettings(); } };
 };
 bindNum('inFtp', 'ftp'); bindNum('inKg', 'kg'); bindNum('inDiff', 'difficulty');
+const qSel = $<HTMLSelectElement>('inQuality'); qSel.value = settings.quality;
+qSel.onchange = () => { settings.quality = qSel.value as Settings['quality']; saveSettings(); toast('Grafikstufe gilt ab dem nächsten Laden der Seite'); };
 const jersey = $<HTMLInputElement>('inJersey'); jersey.value = settings.jersey;
 jersey.onchange = () => { settings.jersey = jersey.value; saveSettings(); toast('Trikotfarbe gilt ab dem nächsten Laden'); };
 setMode(settings.mode);
