@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import type { Route, WorldData } from '../route';
 import { Avatar, type AvatarStyle } from './avatar';
 import { Sky } from './sky';
+import { buildFurniture } from './furniture';
 import { SUN, BuildingField, Heightfield, TreeField, buildLanduseTerrain, buildRoad, buildSideRoads, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
 
 export const cameraModes = ['Verfolger', 'Seite', 'Ego', 'Drohne'] as const;
@@ -53,7 +54,8 @@ export class World {
     const dist = makeRouteDistance(route, route.data.terrain);
     const lu = route.data.landuse;
     this.scene.add(data.landuse && lu ? buildLanduseTerrain(this.hf, data.landuse, lu, dist, quality, data.rawHeights, data.ortho) : buildTerrain(this.hf, dist, data.canopy));
-    this.scene.add(buildRoad(route));
+    this.scene.add(buildRoad(route, data.furniture?.towns));
+    if (data.furniture) this.scene.add(buildFurniture(route, data.furniture, quality));
     if (data.sideRoads) this.scene.add(buildSideRoads(data.sideRoads));
     const w = route.data.world;
     const fogFar = (this.scene.fog as THREE.Fog).far;

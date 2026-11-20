@@ -89,8 +89,9 @@ function surfaceTexture(kind: Surface) {
 interface RibbonPt { x: number; y: number; h: number; hw: number }
 
 /** Fahrbahnband mit Böschung; v-Koordinate entlang der Strecke (texRepeat Meter je Texturhöhe) */
-function ribbon(pts: RibbonPt[], mat: THREE.Material, skirtMat: THREE.Material, lift: number, texRepeat: number, skirtOut = 5, skirtDown = 5) {
-  const n = pts.length, pos = new Float32Array(n * 6), uv = new Float32Array(n * 4), sp = new Float32Array(n * 12);
+function ribbon(pts: RibbonPt[], mat: THREE.Material, skirtMat: THREE.Material, lift: number, texRepeat: number, skirtOut = 5, skirtDown = 5, shoulder = 1.5) {
+  // Fahrbahn + je Seite: flaches Bankett (shoulder m, leicht abfallend) und Böschung bis skirtDown m tiefer
+  const n = pts.length, pos = new Float32Array(n * 6), uv = new Float32Array(n * 4), sp = new Float32Array(n * 18);
   let along = 0;
   for (let k = 0; k < n; k++) {
     const a = pts[Math.max(0, k - 2)], b = pts[Math.min(n - 1, k + 2)], p = pts[k];
@@ -99,15 +100,20 @@ function ribbon(pts: RibbonPt[], mat: THREE.Material, skirtMat: THREE.Material, 
     const hh = p.h + lift, ex = -dy, ey = dx;
     pos.set([p.x + ex * p.hw, hh, -(p.y + ey * p.hw), p.x - ex * p.hw, hh, -(p.y - ey * p.hw)], k * 6);
     uv.set([0, along / texRepeat, 1, along / texRepeat], k * 4);
-    for (const [side, off] of [[1, 0], [-1, 6]] as const) {
-      const sx = ex * side, sy = ey * side;
-      sp.set([p.x + sx * p.hw, hh - 0.02, -(p.y + sy * p.hw), p.x + sx * (p.hw + skirtOut), hh - skirtDown, -(p.y + sy * (p.hw + skirtOut))], k * 12 + off);
+    for (const [side, off] of [[1, 0], [-1, 9]] as const) {
+      const sx = ex * side, sy = ey * side, w1 = p.hw + shoulder, w2 = w1 + skirtOut;
+      sp.set([p.x + sx * p.hw, hh - 0.02, -(p.y + sy * p.hw),
+        p.x + sx * w1, hh - 0.1, -(p.y + sy * w1),
+        p.x + sx * w2, hh - skirtDown, -(p.y + sy * w2)], k * 18 + off);
     }
   }
   const idx: number[] = [], sidx: number[] = [];
   for (let k = 0; k < n - 1; k++) {
     const a = k * 2; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
-    for (const off of [0, 2]) { const c = k * 4 + off; sidx.push(c, c + 4, c + 1, c + 1, c + 4, c + 5); }
+    for (const sideOff of [0, 3]) for (const seg of [0, 1]) {
+      const c = k * 6 + sideOff + seg, d = c + 6;
+      sidx.push(c, d, c + 1, c + 1, d, d + 1);
+    }
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
@@ -125,21 +131,24 @@ const roadMat = (kind: Surface, offset: number) => {
   m.onBeforeCompile = sh => { sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', '#include <map_fragment>\ndiffuseColor.rgb = pow(diffuseColor.rgb, vec3(2.2));'); };
   return m;
 };
-const skirtMaterial = () => new THREE.MeshLambertMaterial({ color: '#6f8350', side: THREE.DoubleSide });
+const skirtMaterial = (color = '#6f8350') => new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide });
 
 /** Hauptstrecke: Straße (5,6 m, Markierung) bzw. Radweg (3,4 m, roter Belag) je Abschnitt */
-export function buildRoad(route: Route) {
+export function buildRoad(route: Route, towns: { from: number; to: number }[] = []) {
   const { x, y, h, step } = route.data, n = x.length, surf = route.data.surface ?? [];
   const isRad = (k: number) => surf.some(s => k * step >= s.from && k * step <= s.to);
-  const group = new THREE.Group(), skirtMat = skirtMaterial();
+  const inTown = (k: number) => towns.some(t => k * step >= t.from && k * step <= t.to);
+  const state = (k: number) => (isRad(k) ? 2 : 0) + (inTown(k) ? 1 : 0);
+  const group = new THREE.Group(), grass = skirtMaterial(), paving = skirtMaterial('#a3a19b');
   const mats = { strasse: roadMat('strasse', -3), radweg: roadMat('radweg', -3) };
   let k = 0;
   while (k < n - 1) {
-    const rad = isRad(k); let e = k;
-    while (e < n - 1 && isRad(e + 1) === rad) e++;
+    const st = state(k), rad = st >= 2, town = (st & 1) === 1; let e = k;
+    while (e < n - 1 && state(e + 1) === st) e++;
     const pts: RibbonPt[] = [];
     for (let i = Math.max(0, k - 1); i <= Math.min(n - 1, e + 1); i++) pts.push({ x: x[i], y: y[i], h: h[i], hw: rad ? 1.7 : 2.8 });
-    group.add(...ribbon(pts, rad ? mats.radweg : mats.strasse, skirtMat, 0.12, rad ? 26 : 24));
+    // innerorts: gepflasterter Gehweg statt Grasbankett
+    group.add(...ribbon(pts, rad ? mats.radweg : mats.strasse, town ? paving : grass, 0.12, rad ? 26 : 24, 5, 5, town ? 2.0 : 1.5));
     k = e + 1;
   }
   return group;
@@ -150,7 +159,7 @@ export function buildSideRoads(roads: { w: number[]; p: number[][] }[]) {
   const group = new THREE.Group(), mat = roadMat('neben', -1), skirtMat = skirtMaterial();
   for (const r of roads) {
     if (r.p.length < 2) continue;
-    group.add(...ribbon(r.p.map((p, i) => ({ x: p[0], y: p[1], h: p[2], hw: r.w[i] / 2 })), mat, skirtMat, 0.06, 24, 3, 3));
+    group.add(...ribbon(r.p.map((p, i) => ({ x: p[0], y: p[1], h: p[2], hw: r.w[i] / 2 })), mat, skirtMat, 0.06, 24, 3, 3, 0.8));
   }
   return group;
 }

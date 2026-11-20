@@ -45,7 +45,9 @@ npm run build        # Produktions-Build nach dist/
 6. Echte Welt aus amtlichen Geodaten NRW (Häuser, Bäume, genaues Gelände):
    `NODE_USE_ENV_PROXY=1 node scripts/prepare-world.mjs public/routes/meinestrecke`
 
-7. Luftbilder als Bodentextur:
+7. Straßenausstattung (Ortstafeln, Leitpfosten, Schutzplanken, Laternen, Bordsteine):
+   `python3 scripts/prepare-furniture.py public/routes/meinestrecke pfad/zu/*.gpkg`
+8. Luftbilder als Bodentextur:
    `python3 scripts/fetch-dop.py public/routes/meinestrecke && python3 scripts/prepare-ortho.py public/routes/meinestrecke`
 
 Benötigte Python-Pakete: `numpy pillow scipy scikit-image`

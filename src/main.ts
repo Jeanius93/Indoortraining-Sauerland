@@ -51,6 +51,8 @@ async function init() {
   const loaded = await loadRoute('routes/hausrunde', msg => { $('loading').firstElementChild!.textContent = msg; });
   route = loaded.route;
   $('loading').firstElementChild!.textContent = 'Sauerland wird aufgebaut …';
+  // Schrift für Ortstafeln laden (höchstens 2 s warten)
+  try { await Promise.race([document.fonts.load('700 64px "Barlow Condensed"'), new Promise(r => setTimeout(r, 2000))]); } catch { /* Ersatzschrift */ }
   await new Promise(r => setTimeout(r, 30));
   world = new World($<HTMLCanvasElement>('view'), route, loaded.heights, loaded.world, { jersey: settings.jersey, jersey2: '#1d2a44', bike: '#20242b' }, quality);
   profile = new ProfileChart($<HTMLCanvasElement>('profile'), route, { bg: 'rgba(13,22,19,.78)', labels: true });

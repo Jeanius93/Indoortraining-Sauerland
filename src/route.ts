@@ -30,6 +30,7 @@ export interface WorldData {
   landuse?: Uint8Array;
   rawHeights?: Int16Array; // Gelände ohne eingeschnittene Straße (für glatte Beleuchtung)
   sideRoads?: { w: number[]; p: number[][] }[]; // abzweigende Straßen [x, y, h]
+  furniture?: import('./world/furniture').FurnitureData; // Ortstafeln, Leitpfosten, Schutzplanken, Laternen
   ortho?: Map<string, ImageData>;                // Luftbild je Geländekachel ("ci_cj"), Zeile 0 = Süden
 }
 
@@ -108,6 +109,10 @@ export async function loadRoute(base: string, onProgress?: (msg: string) => void
     if (c) world.canopy = new Uint8Array(c);
     try { world.rawHeights = new Int16Array(await fetchBin(base, 'terrain_raw')); } catch { /* optional */ }
   }
+  try {
+    const r = await fetch(`${base}/furniture.json`);
+    if (r.ok && (r.headers.get('content-type') ?? '').includes('json')) world.furniture = await r.json();
+  } catch { /* optional */ }
   try {
     const r = await fetch(`${base}/roads.json`);
     if (r.ok) world.sideRoads = (await r.json() as { roads: WorldData['sideRoads'] }).roads;
