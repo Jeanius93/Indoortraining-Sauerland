@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import type { Route, WorldData } from '../route';
 import { Avatar, type AvatarStyle } from './avatar';
 import { Sky } from './sky';
+import { applyLook, usesPhoto, LOOKS, type Look, type Layers } from './style';
+import type { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { buildFurniture } from './furniture';
 import { buildLandmarks } from './landmarks';
 import { GrassField } from './grass';
@@ -31,6 +33,8 @@ export class World {
   private grass: GrassField | null = null;
   /** Test-/Entwicklungsansicht: feste Kamera (lokale Koordinaten x Ost, y Nord, z Höhe) */
   debugView: { from: number[]; to: number[] } | null = null;
+  readonly look: Look;
+  private composer: EffectComposer | null = null;
 
   constructor(canvas: HTMLCanvasElement, private route: Route, heights: Int16Array, data: WorldData, style: AvatarStyle, quality: 'low' | 'high') {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: quality === 'high', powerPreference: 'high-performance' });
@@ -43,7 +47,10 @@ export class World {
     const haze = new THREE.Color('#c9d9e6');
     this.scene.background = haze;
     this.scene.fog = new THREE.Fog(haze, 300, quality === 'high' ? 4200 : 2600);
-    this.scene.add(new THREE.HemisphereLight('#d6e6ff', '#5f6a48', 1.35));
+    const lp = new URLSearchParams(location.search).get('style') as Look | null;
+    this.look = lp && (LOOKS as readonly string[]).includes(lp) ? lp : 'real';
+    const hemi = new THREE.HemisphereLight('#d6e6ff', '#5f6a48', 1.35);
+    this.scene.add(hemi);
     this.sun.position.copy(SUN).multiplyScalar(600);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(quality === 'high' ? 2048 : 1024, quality === 'high' ? 2048 : 1024);
@@ -58,25 +65,29 @@ export class World {
     this.hf = new Heightfield(heights, route.data.terrain);
     const dist = makeRouteDistance(route, route.data.terrain);
     const lu = route.data.landuse;
-    this.scene.add(data.landuse && lu ? buildLanduseTerrain(this.hf, data.landuse, lu, dist, quality, data.rawHeights, data.ortho) : buildTerrain(this.hf, dist, data.canopy));
-    this.scene.add(buildRoad(route, data.furniture?.towns));
-    if (data.furniture) this.scene.add(buildFurniture(route, data.furniture, quality));
-    if (data.landmarks) this.scene.add(buildLandmarks(data.landmarks, this.hf));
-    if (data.landuse && lu) { this.grass = new GrassField(route, this.hf, data.landuse, lu, quality); this.scene.add(this.grass.group); }
-    if (data.sideRoads) this.scene.add(buildSideRoads(data.sideRoads));
+    const layers: Layers = { terrain: [], roads: [], buildings: [], trees: [], grass: [], other: [] };
+    const add = (k: keyof Layers, o: THREE.Object3D) => { this.scene.add(o); layers[k].push(o); };
+    const ortho = usesPhoto(this.look) ? data.ortho : undefined;
+    add('terrain', data.landuse && lu ? buildLanduseTerrain(this.hf, data.landuse, lu, dist, quality, data.rawHeights, ortho) : buildTerrain(this.hf, dist, data.canopy));
+    add('roads', buildRoad(route, data.furniture?.towns));
+    if (data.furniture) add('other', buildFurniture(route, data.furniture, quality));
+    if (data.landmarks) add('other', buildLandmarks(data.landmarks, this.hf));
+    if (data.landuse && lu) { this.grass = new GrassField(route, this.hf, data.landuse, lu, quality); add('grass', this.grass.group); }
+    if (data.sideRoads) add('roads', buildSideRoads(data.sideRoads));
     const w = route.data.world;
     const fogFar = (this.scene.fog as THREE.Fog).far;
     if (data.buildings && w) {
       this.buildings = new BuildingField(this.hf, data.buildings, w.buildings, fogFar);
-      this.scene.add(this.buildings.group); this.buildingCount = w.buildings.count;
+      add('buildings', this.buildings.group); this.buildingCount = w.buildings.count;
     }
     if (data.trees) {
       this.trees = new TreeField(this.hf, data.trees, dist, quality, quality === 'high' ? 500 : 300, fogFar);
-      this.scene.add(this.trees.group); this.treeCount = this.trees.count;
+      add('trees', this.trees.group); this.treeCount = this.trees.count;
     } else {
       const trees = buildTrees(this.hf, dist, route, quality);
-      this.treeCount = trees.count; this.scene.add(trees.group);
+      this.treeCount = trees.count; add('trees', trees.group);
     }
+    this.composer = applyLook(this.look, { scene: this.scene, renderer: this.renderer, camera: this.camera, sky: this.sky.mesh, sun: this.sun, hemi, layers });
 
     this.avatar = new Avatar(style);
     this.scene.add(this.avatar.root);
@@ -87,6 +98,7 @@ export class World {
     this.camera.aspect = w / h;
     this.camera.fov = w / h < 0.8 ? 72 : 60; // Hochformat (Handy): etwas weiter
     this.camera.updateProjectionMatrix();
+    (this.composer as unknown as { fit?: () => void } | null)?.fit?.();
   }
 
   /** Avatar an Streckenposition d setzen, Kamera nachführen, rendern */
@@ -135,7 +147,7 @@ export class World {
     this.sky.update(dt);
     shaderTime.value += dt;
     this.sun.target.position.copy(a.position);
-    this.renderer.render(this.scene, this.camera);
+    if (this.composer) this.composer.render(dt); else this.renderer.render(this.scene, this.camera);
   }
 
   /** Kamera ohne Nachziehen neu setzen (nach einem Sprung) */
