@@ -1,0 +1,23 @@
+[
+ {
+  "id": "hausrunde",
+  "name": "Hausrunde",
+  "length": 39890,
+  "ascent": 369,
+  "maxGrade": 8.5
+ },
+ {
+  "id": "runde-2",
+  "name": "Valbert-Runde über Elsen",
+  "length": 37215,
+  "ascent": 560,
+  "maxGrade": 10.5
+ },
+ {
+  "id": "runde-3",
+  "name": "Valbert-Runde über Rärin",
+  "length": 42160,
+  "ascent": 509,
+  "maxGrade": 10
+ }
+]

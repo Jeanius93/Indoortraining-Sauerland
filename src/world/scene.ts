@@ -120,7 +120,7 @@ export class World {
     // Kamera
     const fwd = new THREE.Vector3(Math.sin(p.heading), 0, -Math.cos(p.heading));
     const side = new THREE.Vector3(fwd.z, 0, -fwd.x); // links der Fahrtrichtung
-    const ahead = this.route.pose(Math.min(d + 25, this.route.length));
+    const ahead = this.route.pose(this.route.loop ? d + 25 : Math.min(d + 25, this.route.length));
     const lookAhead = new THREE.Vector3(ahead.x, ahead.h + 1, -ahead.y);
     const pos = new THREE.Vector3(), look = new THREE.Vector3();
     const back = (m: number) => this.route.pose(Math.max(0, d - m));

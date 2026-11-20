@@ -9,7 +9,7 @@
     "preview": "vite preview --host",
     "route": "node scripts/prepare-route.mjs",
     "test": "node --test tests/*.test.mjs",
-    "deploy": "npm run build && node scripts/make-docs.mjs"
+    "deploy": "node scripts/make-index.mjs && npm run build && node scripts/make-docs.mjs docs --ohne-luftbild"
   },
   "repository": {
     "type": "git",

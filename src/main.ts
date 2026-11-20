@@ -262,7 +262,7 @@ $('btnGo').onclick = async () => {
     const lastS = recorder.samples.at(-1); dist = lastS?.dist ?? 0; elapsed = recorder.samples.length; lastSampleSec = Math.floor(elapsed);
     resumeRide = null; $('resumeBox').hidden = true; $('btnGo').textContent = 'Losfahren';
     world.snapCamera();
-    rideStart = (recorder.samples[0]?.dist ?? dist); lap = Math.floor((dist - rideStart) / route.length);
+    rideStart = (recorder.samples[0]?.dist ?? dist); lap = Math.floor(dist / route.length) - Math.floor(rideStart / route.length);
   }
   ergTarget = Math.round(settings.ftp * 0.65 / 5) * 5;
   applyMode();
@@ -418,7 +418,7 @@ function loop(now: number) {
       void persist();
     }
     if (route.loop) {
-      const l = Math.floor((dist - rideStart) / route.length);
+      const l = Math.floor(dist / route.length) - Math.floor(rideStart / route.length);   // Überquerungen der Ziellinie
       if (l > lap) { lap = l; toast(`Runde ${lap} geschafft – weiter geht’s mit Runde ${lap + 1}`, 4000); }
     } else if (dist >= route.length) finish();
   } else if (running && (paused || stalled)) {

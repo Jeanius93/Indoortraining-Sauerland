@@ -11,7 +11,7 @@ else fs.rmSync(OUT, { recursive: true, force: true });
 fs.cpSync('dist', OUT, { recursive: true });
 fs.writeFileSync(path.join(OUT, '.nojekyll'), '');
 let before = 0, after = 0;
-for (const dir of fs.readdirSync(path.join(OUT, 'routes'))) {
+for (const dir of fs.readdirSync(path.join(OUT, 'routes')).filter(d => fs.statSync(path.join(OUT, 'routes', d)).isDirectory())) {
   if (lean) for (const f of ['ortho', 'ortho1', 'ortho.json', 'buildings.bin']) fs.rmSync(path.join(OUT, 'routes', dir, f), { recursive: true, force: true });
   for (const f of fs.readdirSync(path.join(OUT, 'routes', dir))) {
     const p = path.join(OUT, 'routes', dir, f);

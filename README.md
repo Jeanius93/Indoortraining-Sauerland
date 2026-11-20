@@ -32,6 +32,11 @@ npm run build        # Produktions-Build nach dist/
 
 ## Neue Strecke hinzufügen
 
+Kurzweg (alles in einem Schritt, Fahrt wird zum Rundkurs ohne Haustür):
+`scripts/build-route.sh <aufzeichnung.gpx> <id> "<Name>" && node scripts/make-index.mjs && npm run deploy`
+
+Einzelschritte:
+
 1. GPX bei Strava exportieren (Aktivität → ⋯ → „GPX exportieren“)
 2. Zeit/Puls entfernen und Anfang/Ende abschneiden (Privatsphäre):
    `node scripts/trim-gpx.mjs eingabe.gpx routes/meinestrecke.gpx 500 "Meine Strecke"`
