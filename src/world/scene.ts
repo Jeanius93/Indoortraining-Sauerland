@@ -2,7 +2,8 @@
 import * as THREE from 'three';
 import type { Route, WorldData } from '../route';
 import { Avatar, type AvatarStyle } from './avatar';
-import { BuildingField, Heightfield, TreeField, buildLanduseTerrain, buildRoad, buildSideRoads, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
+import { Sky } from './sky';
+import { SUN, BuildingField, Heightfield, TreeField, buildLanduseTerrain, buildRoad, buildSideRoads, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
 
 export const cameraModes = ['Verfolger', 'Seite', 'Ego', 'Drohne'] as const;
 export type CameraMode = typeof cameraModes[number];
@@ -19,6 +20,7 @@ export class World {
   private camLook = new THREE.Vector3();
   private first = true;
   treeCount = 0;
+  private sky!: Sky;
   buildingCount = 0;
   private trees: TreeField | null = null;
   private buildings: BuildingField | null = null;
@@ -32,11 +34,11 @@ export class World {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
 
-    const sky = new THREE.Color('#7fa9d6'), haze = new THREE.Color('#c4d3dc');
-    this.scene.background = sky;
+    const haze = new THREE.Color('#c9d9e6');
+    this.scene.background = haze;
     this.scene.fog = new THREE.Fog(haze, 300, quality === 'high' ? 4200 : 2600);
     this.scene.add(new THREE.HemisphereLight('#d6e6ff', '#5f6a48', 1.35));
-    this.sun.position.set(-300, 500, 200);
+    this.sun.position.copy(SUN).multiplyScalar(600);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(quality === 'high' ? 2048 : 1024, quality === 'high' ? 2048 : 1024);
     const R = quality === 'high' ? 45 : 14, sc = this.sun.shadow.camera;
@@ -44,7 +46,8 @@ export class World {
     this.sun.shadow.normalBias = 0.03;
     this.sun.shadow.bias = -0.0005;
     this.scene.add(this.sun, this.sun.target);
-    this.scene.add(this.skyDome(sky, haze));
+    this.sky = new Sky(SUN, quality);
+    this.camera.add(this.sky.mesh); this.scene.add(this.camera);
 
     this.hf = new Heightfield(heights, route.data.terrain);
     const dist = makeRouteDistance(route, route.data.terrain);
@@ -68,27 +71,6 @@ export class World {
 
     this.avatar = new Avatar(style);
     this.scene.add(this.avatar.root);
-  }
-
-  private skyDome(top: THREE.Color, horizon: THREE.Color) {
-    const g = new THREE.SphereGeometry(8000, 24, 12);
-    const m = new THREE.ShaderMaterial({
-      side: THREE.BackSide, depthWrite: false, fog: false,
-      uniforms: { top: { value: top.clone().multiplyScalar(0.85) }, horizon: { value: horizon }, sunDir: { value: new THREE.Vector3(-300, 500, 200).normalize() } },
-      vertexShader: 'varying vec3 vD; void main(){ vD = normalize((modelMatrix * vec4(position,1.0)).xyz - cameraPosition); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-      fragmentShader: `uniform vec3 top; uniform vec3 horizon; uniform vec3 sunDir; varying vec3 vD;
-        void main(){ vec3 d = normalize(vD); float t = pow(clamp(d.y, 0.0, 1.0), 0.5);
-          vec3 c = mix(horizon, top, t);
-          float s = max(dot(d, sunDir), 0.0);
-          c += vec3(1.0, 0.92, 0.75) * (pow(s, 600.0) * 2.5 + pow(s, 12.0) * 0.18);
-          gl_FragColor = vec4(c, 1.0);
-          #include <tonemapping_fragment>
-          #include <colorspace_fragment>
-        }`,
-    });
-    const mesh = new THREE.Mesh(g, m); mesh.renderOrder = -1; mesh.frustumCulled = false;
-    this.camera.add(mesh); this.scene.add(this.camera);
-    return new THREE.Group();
   }
 
   resize(w: number, h: number) {
@@ -136,7 +118,8 @@ export class World {
     if (this.lodTimer <= 0) { this.lodTimer = 0.4; this.trees?.update(this.camera.position); this.buildings?.update(this.camera.position); }
 
     // Schatten-Kamera folgt dem Avatar
-    this.sun.position.copy(a.position).add(new THREE.Vector3(-300, 500, 200));
+    this.sun.position.copy(a.position).addScaledVector(SUN, 600);
+    this.sky.update(dt);
     this.sun.target.position.copy(a.position);
     this.renderer.render(this.scene, this.camera);
   }

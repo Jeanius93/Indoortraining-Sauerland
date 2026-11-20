@@ -360,7 +360,8 @@ export class BuildingField {
 }
 
 // ---------- Gelände mit Nutzungskarte (ALKIS) bzw. Luftbild (DOP) ----------
-export const SUN = new THREE.Vector3(-300, 500, 200).normalize();
+// Sonne am Nachmittag aus Südwesten, ca. 22° hoch (Three.js: +Z = Süden)
+export const SUN = new THREE.Vector3(-0.55, 0.38, 0.74).normalize();
 
 let detailTex: THREE.Texture | null = null;
 /** Feine, kachelbare Struktur (Gras/Körnung), damit das 2-m-Luftbild aus der Nähe nicht verwaschen wirkt */

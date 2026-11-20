@@ -303,7 +303,7 @@ $('profile').addEventListener('pointerdown', e => {
 // ---------- Hauptschleife ----------
 let last = performance.now(), lastPhysics = performance.now(), hudTimer = 0;
 function loop(now: number) {
-  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  const dt = Math.min(1, (now - last) / 1000); last = now;
   const prevPhysics = lastPhysics; lastPhysics = now;
   pad.poll(now);
   const grade = route.gradeAt(dist);
