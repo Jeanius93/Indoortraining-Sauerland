@@ -25,7 +25,7 @@ rx, ry, rh = np.array(route['x']), np.array(route['y']), np.array(route['h'])
 step, n = route['step'], len(route['x'])
 radweg = route.get('surface', [])
 is_rad = np.array([any(s['from'] <= k * step <= s['to'] for s in radweg) for k in range(n)])
-hw = np.where(is_rad, 1.7, 2.8)
+hw = np.where(is_rad, 1.7, np.array(route.get('width', [5.6] * n)) / 2)
 
 def lu_at(x, y):
     i, j = int((x - x0) / PX), int((y - y0) / PX)
@@ -125,6 +125,17 @@ def lookup(items, E, N): return next((nm for nm, parts in items if inside(parts,
 STAEDTE = {'Altena', 'Balve', 'Halver', 'Hemer', 'Iserlohn', 'Kierspe', 'Lüdenscheid', 'Meinerzhagen', 'Menden (Sauerl.)', 'Neuenrade', 'Plettenberg', 'Werdohl', 'Attendorn', 'Olpe', 'Lennestadt', 'Drolshagen'}
 NOT_PLACE = re.compile(r'(straße|strasse|weg|gasse|platz|ring|allee|pfad|steig|ufer|hang|berg$|^(am|an|auf|im|in|zum|zur|von|bei|unterm|unter|hinter|vor|über)\b|^[A-Z]{1,2} ?\d)', re.I)
 PLACE = re.compile(r'(hausen|bert|lin|mert|scheid|bruch|dorf|hagen|thal|tal|rade|ohl|siepen|ecke|feld|born|bach|holz|heim|ingen|stein|kamp)$', re.I)
+# Durchgehende Ortslagen an Gemarkungsgrenzen teilen (dort stehen Ortsteil-Tafeln)
+split = []
+for a_, b_ in towns:
+    cur_a, prev = a_, None
+    for k in range(a_, b_ + 1, int(50 / step)):
+        g_ = lookup(gem, *utm(rx[k], ry[k]))
+        if prev is not None and g_ != prev and g_ and (k - cur_a) * step > 300 and (b_ - k) * step > 300:
+            split.append([cur_a, k]); cur_a = k + 1
+        prev = g_ or prev
+    split.append([cur_a, b_])
+towns = split
 town_out = []
 for a_, b_ in towns:
     mid = (a_ + b_) // 2; E, N = utm(rx[mid], ry[mid])
@@ -135,6 +146,7 @@ for a_, b_ in towns:
         Ek, Nk = utm(rx[k], ry[k])
         for nm, (se, sn) in streets:
             if ' ' not in nm and not NOT_PLACE.search(nm) and PLACE.search(nm) and math.hypot(se - Ek, sn - Nk) < 250: cand[nm] = cand.get(nm, 0) + 1
+    gemarkung = lookup(gem, *utm(rx[(a_ + b_) // 2], ry[(a_ + b_) // 2]))
     # kurze Ortslagen (Weiler) dürfen nach ihrer Straße heißen, größere nach der Gemarkung
     name = max(cand, key=cand.get) if cand and (b_ - a_) * step < 1200 else (gemarkung or gemeinde or 'Ort')
     if gemeinde and name == gemeinde: sub = 'Märkischer Kreis'

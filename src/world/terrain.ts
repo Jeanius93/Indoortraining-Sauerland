@@ -146,7 +146,7 @@ export function buildRoad(route: Route, towns: { from: number; to: number }[] = 
     const st = state(k), rad = st >= 2, town = (st & 1) === 1; let e = k;
     while (e < n - 1 && state(e + 1) === st) e++;
     const pts: RibbonPt[] = [];
-    for (let i = Math.max(0, k - 1); i <= Math.min(n - 1, e + 1); i++) pts.push({ x: x[i], y: y[i], h: h[i], hw: rad ? 1.7 : 2.8 });
+    for (let i = Math.max(0, k - 1); i <= Math.min(n - 1, e + 1); i++) pts.push({ x: x[i], y: y[i], h: h[i], hw: rad ? 1.7 : (route.data.width?.[i] ?? 5.6) / 2 });
     // innerorts: gepflasterter Gehweg statt Grasbankett
     group.add(...ribbon(pts, rad ? mats.radweg : mats.strasse, town ? paving : grass, 0.12, rad ? 26 : 24, 5, 5, town ? 2.0 : 1.5));
     k = e + 1;
@@ -332,7 +332,8 @@ function treeMeshes(spruce: THREE.Matrix4[], leaf: THREE.Matrix4[], r: () => num
 export class BuildingField {
   readonly group = new THREE.Group();
   private chunks: { center: THREE.Vector3; mesh: THREE.Mesh }[] = [];
-  constructor(hf: Heightfield, b: { pos: Uint16Array; col: Uint8Array }, info: { qxy: number; qz: number; palette: string[] }, private farDist: number) {
+  constructor(hf: Heightfield, b: { pos: Uint16Array; col: Uint8Array }, info: { qxy: number; qz: number; palette: string[]; rgb?: boolean }, private farDist: number) {
+    const tmpC = new THREE.Color();
     const { x0, y0 } = hf.t, nT = b.pos.length / 9, C = 1000;
     const pal = info.palette.map(c => new THREE.Color(c));
     const byChunk = new Map<string, number[]>();
@@ -345,7 +346,7 @@ export class BuildingField {
     for (const [key, tris] of byChunk) {
       const pos = new Float32Array(tris.length * 9), col = new Float32Array(tris.length * 9);
       tris.forEach((t, k) => {
-        const c = pal[b.col[t]] ?? pal[0];
+        const c = info.rgb ? tmpC.setRGB(b.col[t * 3] / 255, b.col[t * 3 + 1] / 255, b.col[t * 3 + 2] / 255, THREE.SRGBColorSpace) : (pal[b.col[t]] ?? pal[0]);
         for (let v = 0; v < 3; v++) {
           const src = t * 9 + v * 3, dst = k * 9 + v * 3;
           pos[dst] = x0 + b.pos[src] * info.qxy; pos[dst + 1] = b.pos[src + 2] * info.qz; pos[dst + 2] = -(y0 + b.pos[src + 1] * info.qxy);
@@ -389,19 +390,56 @@ function detailTexture() {
   detailTex.wrapS = detailTex.wrapT = THREE.RepeatWrapping; detailTex.anisotropy = 8;
   return detailTex;
 }
-function photoMaterial(map: THREE.Texture) {
+export const shaderTime = { value: 0 };
+function photoMaterial(map: THREE.Texture, classMap: THREE.Texture) {
   const m = new THREE.MeshBasicMaterial({ map, vertexColors: true });
   m.toneMapped = false;
   m.onBeforeCompile = sh => {
     sh.uniforms.detailMap = { value: detailTexture() };
+    sh.uniforms.classMap = { value: classMap };
+    sh.uniforms.sunDir = { value: SUN };
+    sh.uniforms.time = shaderTime;
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWP = (modelMatrix * vec4(position, 1.0)).xyz;');
-    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP; uniform sampler2D detailMap;')
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP; uniform sampler2D detailMap; uniform sampler2D classMap; uniform vec3 sunDir; uniform float time;')
       .replace('#include <map_fragment>', `#include <map_fragment>
         diffuseColor.rgb = pow(diffuseColor.rgb, vec3(2.2));
         float dd = length(vWP - cameraPosition);
-        float det = texture2D(detailMap, vWP.xz / 3.0).r * 0.6 + texture2D(detailMap, vWP.xz / 11.0).r * 0.4;
-        diffuseColor.rgb *= mix(0.80 + 0.40 * det, 1.0, smoothstep(40.0, 160.0, dd));`);
+        float near = 1.0 - smoothstep(40.0, 260.0, dd);
+        int cls = int(texture2D(classMap, vMapUv).r * 255.0 + 0.5);
+        vec2 p = vWP.xz;
+        float n1 = texture2D(detailMap, p / 2.3).r, n2 = texture2D(detailMap, p / 0.6).r, n3 = texture2D(detailMap, p / 9.0).r;
+        float lum = dot(diffuseColor.rgb, vec3(0.3, 0.55, 0.15));
+        float isWater = cls == 8 ? 1.0 - smoothstep(0.035, 0.075, lum) : 0.0;   // nur wo das Luftbild dunkles Wasser zeigt
+        if (isWater > 0.01) {
+          // Wasser: dunkler Grund, Himmelsspiegelung (Fresnel), Wellen und Sonnenglitzern
+          vec3 V = normalize(cameraPosition - vWP);
+          vec2 w = vec2(texture2D(detailMap, p / 7.0 + vec2(time * 0.012, time * 0.007)).r, texture2D(detailMap, p / 5.0 - vec2(time * 0.01, -time * 0.013)).r) - 0.5;
+          vec3 N = normalize(vec3(w.x * 0.18, 1.0, w.y * 0.18));
+          float fres = 0.08 + 0.92 * pow(1.0 - max(dot(N, V), 0.0), 4.0);
+          vec3 sky = mix(vec3(0.62, 0.72, 0.82), vec3(0.24, 0.42, 0.68), clamp(reflect(-V, N).y * 1.6, 0.0, 1.0));
+          vec3 deep = diffuseColor.rgb * 0.55 + vec3(0.01, 0.03, 0.04);
+          float spec = pow(max(dot(reflect(-sunDir, N), V), 0.0), 300.0) * 1.2;
+          diffuseColor.rgb = mix(diffuseColor.rgb, mix(deep, sky, fres * 0.8) + vec3(1.0, 0.95, 0.85) * spec, isWater);
+        } else if (cls == 1 || cls == 0 || cls == 13 || cls == 14 || cls == 12) {
+          // Wiese: Halme (gerichtetes Rauschen), Farbvariation, vereinzelte Blüten
+          float blades = texture2D(detailMap, vec2(p.x / 0.35, p.y / 1.6)).r * 0.5 + n2 * 0.5;
+          vec3 c = diffuseColor.rgb * mix(0.62, 1.38, blades);
+          c = mix(c, c * vec3(1.08, 1.12, 0.82), smoothstep(0.55, 0.8, n3) * 0.5);
+          float fl = step(0.985, texture2D(detailMap, p / 0.25).r) * step(0.5, n3);
+          c = mix(c, n1 > 0.5 ? vec3(0.95, 0.92, 0.75) : vec3(0.95, 0.85, 0.2), fl * 0.8);
+          diffuseColor.rgb = mix(diffuseColor.rgb * (0.85 + 0.3 * n1), c, near);
+        } else if (cls == 2) {
+          // Acker: Bewirtschaftungsreihen (Richtung je Feld aus großräumigem Rauschen)
+          float ang = texture2D(detailMap, p / 220.0).r * 6.2832;
+          float rows = sin(dot(p, vec2(cos(ang), sin(ang))) * 6.2832 / 0.75) * 0.5 + 0.5;
+          diffuseColor.rgb *= mix(1.0, 0.78 + 0.32 * rows * (0.7 + 0.3 * n2), near) * (0.92 + 0.16 * n1);
+        } else if (cls >= 3 && cls <= 5) {
+          // Waldboden: Nadeln/Laub, dunkler, fleckig
+          diffuseColor.rgb *= mix(0.9 + 0.2 * n1, 0.62 + 0.55 * n2 * n1, near);
+        } else {
+          diffuseColor.rgb *= mix(1.0, 0.82 + 0.36 * (n1 * 0.6 + n2 * 0.4), near);
+        }`);
   };
   return m;
 }
@@ -510,7 +548,16 @@ export function buildLanduseTerrain(hf: Heightfield, lu: Uint8Array, info: { px:
         const v = (0.66 + 0.42 * d) * shade.getX(k);
         shade.setXYZ(k, v, v, v);
       }
-      mesh = new THREE.Mesh(g, photoMaterial(t));
+      // Nutzungsklassen der Kachel (2 m) für Detailmuster und Wasser im Shader
+      const cw = Math.ceil(texW / info.px), chh = Math.ceil(texH / info.px), cls = new Uint8Array(cw * chh);
+      const ox = Math.round((cx0 - x0) / info.px), oy = Math.round((cy0 - y0) / info.px);
+      for (let j2 = 0; j2 < chh; j2++) for (let i2 = 0; i2 < cw; i2++) {
+        const li = ox + i2, lj = oy + j2;
+        cls[j2 * cw + i2] = li < info.w && lj < info.h ? lu[lj * info.w + li] : 0;
+      }
+      const ct = new THREE.DataTexture(cls, cw, chh, THREE.RedFormat, THREE.UnsignedByteType);
+      ct.magFilter = ct.minFilter = THREE.NearestFilter; ct.needsUpdate = true;
+      mesh = new THREE.Mesh(g, photoMaterial(t, ct));
     } else {
       mesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: t, vertexColors: true }));
       mesh.receiveShadow = true;

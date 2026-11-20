@@ -48,7 +48,7 @@ function toast(msg: string, ms = 2600) {
 
 // ---------- Start ----------
 async function init() {
-  const loaded = await loadRoute('routes/hausrunde', msg => { $('loading').firstElementChild!.textContent = msg; });
+  const loaded = await loadRoute('routes/hausrunde', msg => { $('loading').firstElementChild!.textContent = msg; }, { fine: quality === 'high' && import.meta.env.MODE !== 'artifact' });
   route = loaded.route;
   $('loading').firstElementChild!.textContent = 'Sauerland wird aufgebaut …';
   // Schrift für Ortstafeln laden (höchstens 2 s warten)

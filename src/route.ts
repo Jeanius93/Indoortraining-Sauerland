@@ -13,13 +13,14 @@ export interface RouteData {
   terrain: { x0: number; y0: number; cell: number; nx: number; ny: number; scale: number };
   attribution: string;
   world?: {
-    buildings: { vertices: number; triangles: number; count: number; qxy: number; qz: number; palette: string[] };
+    buildings: { vertices: number; triangles: number; count: number; qxy: number; qz: number; palette: string[]; rgb?: boolean };
     trees: { count: number; qxy: number };
     canopy: boolean;
   };
   landuse?: { px: number; w: number; h: number; classes: Record<string, string> };
   places?: { d: number; road: string | null; area: string | null }[];
   surface?: { from: number; to: number; type: 'radweg' }[];
+  width?: number[];   // echte Fahrbahnbreite je Streckenpunkt (m)
 }
 
 /** Echte Weltdaten (Geobasis NRW), falls für die Strecke vorhanden */
@@ -30,7 +31,8 @@ export interface WorldData {
   landuse?: Uint8Array;
   rawHeights?: Int16Array; // Gelände ohne eingeschnittene Straße (für glatte Beleuchtung)
   sideRoads?: { w: number[]; p: number[][] }[]; // abzweigende Straßen [x, y, h]
-  furniture?: import('./world/furniture').FurnitureData; // Ortstafeln, Leitpfosten, Schutzplanken, Laternen
+  furniture?: import('./world/furniture').FurnitureData;
+  landmarks?: import('./world/landmarks').LandmarkData;  // Talsperre, Aqua Magis, Türme, Hochspannung // Ortstafeln, Leitpfosten, Schutzplanken, Laternen
   ortho?: Map<string, ImageData>;                // Luftbild je Geländekachel ("ci_cj"), Zeile 0 = Süden
 }
 
@@ -94,7 +96,7 @@ async function fetchBin(base: string, name: string): Promise<ArrayBuffer> {
   return r.arrayBuffer();
 }
 
-export async function loadRoute(base: string, onProgress?: (msg: string) => void) {
+export async function loadRoute(base: string, onProgress?: (msg: string) => void, opts: { fine?: boolean } = {}) {
   const data = await fetch(`${base}/route.json`).then(r => { if (!r.ok) throw new Error(`route.json: ${r.status}`); return r.json() as Promise<RouteData>; });
   onProgress?.('Gelände wird geladen …');
   const heights = new Int16Array(await fetchBin(base, 'terrain'));
@@ -104,11 +106,15 @@ export async function loadRoute(base: string, onProgress?: (msg: string) => void
     // Kronendach nur nötig, wenn keine Nutzungskarte vorliegt
     const [b, t, c] = await Promise.all([fetchBin(base, 'buildings'), fetchBin(base, 'trees'), data.landuse ? Promise.resolve(null) : fetchBin(base, 'canopy')]);
     const nV = data.world.buildings.vertices;
-    world.buildings = { pos: new Uint16Array(b, 0, nV * 3), col: new Uint8Array(b, nV * 6, nV / 3) };
+    world.buildings = { pos: new Uint16Array(b, 0, nV * 3), col: new Uint8Array(b, nV * 6, data.world.buildings.rgb ? nV : nV / 3) };
     world.trees = new Uint8Array(t);
     if (c) world.canopy = new Uint8Array(c);
     try { world.rawHeights = new Int16Array(await fetchBin(base, 'terrain_raw')); } catch { /* optional */ }
   }
+  try {
+    const r = await fetch(`${base}/landmarks.json`);
+    if (r.ok && (r.headers.get('content-type') ?? '').includes('json')) world.landmarks = await r.json();
+  } catch { /* optional */ }
   try {
     const r = await fetch(`${base}/furniture.json`);
     if (r.ok && (r.headers.get('content-type') ?? '').includes('json')) world.furniture = await r.json();
@@ -120,12 +126,13 @@ export async function loadRoute(base: string, onProgress?: (msg: string) => void
   try {
     const r = await fetch(`${base}/ortho.json`);
     if (r.ok) {
-      const man = await r.json() as { tiles: Record<string, number> };
+      const man = await r.json() as { tiles: Record<string, number>; fine?: string[] };
+      const fine = new Set(opts.fine ? man.fine ?? [] : []);
       const keys = Object.keys(man.tiles), out = new Map<string, ImageData>();
       let done = 0;
       const worker = async () => {
         for (let k = keys.shift(); k; k = keys.shift()) {
-          const res = await fetch(`${base}/ortho/${k}.jpg`);
+          const res = await fetch(`${base}/${fine.has(k) ? 'ortho1' : 'ortho'}/${k}.jpg`);
           if (res.ok) {
             const url = URL.createObjectURL(await res.blob()), img = new Image(); img.src = url;
             await img.decode();

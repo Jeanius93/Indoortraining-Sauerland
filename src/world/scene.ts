@@ -4,7 +4,9 @@ import type { Route, WorldData } from '../route';
 import { Avatar, type AvatarStyle } from './avatar';
 import { Sky } from './sky';
 import { buildFurniture } from './furniture';
-import { SUN, BuildingField, Heightfield, TreeField, buildLanduseTerrain, buildRoad, buildSideRoads, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
+import { buildLandmarks } from './landmarks';
+import { GrassField } from './grass';
+import { SUN, shaderTime, BuildingField, Heightfield, TreeField, buildLanduseTerrain, buildRoad, buildSideRoads, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
 
 export const cameraModes = ['Verfolger', 'Seite', 'Ego', 'Drohne'] as const;
 export type CameraMode = typeof cameraModes[number];
@@ -26,6 +28,9 @@ export class World {
   private trees: TreeField | null = null;
   private buildings: BuildingField | null = null;
   private lodTimer = 0;
+  private grass: GrassField | null = null;
+  /** Test-/Entwicklungsansicht: feste Kamera (lokale Koordinaten x Ost, y Nord, z Höhe) */
+  debugView: { from: number[]; to: number[] } | null = null;
 
   constructor(canvas: HTMLCanvasElement, private route: Route, heights: Int16Array, data: WorldData, style: AvatarStyle, quality: 'low' | 'high') {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: quality === 'high', powerPreference: 'high-performance' });
@@ -56,6 +61,8 @@ export class World {
     this.scene.add(data.landuse && lu ? buildLanduseTerrain(this.hf, data.landuse, lu, dist, quality, data.rawHeights, data.ortho) : buildTerrain(this.hf, dist, data.canopy));
     this.scene.add(buildRoad(route, data.furniture?.towns));
     if (data.furniture) this.scene.add(buildFurniture(route, data.furniture, quality));
+    if (data.landmarks) this.scene.add(buildLandmarks(data.landmarks, this.hf));
+    if (data.landuse && lu) { this.grass = new GrassField(route, this.hf, data.landuse, lu, quality); this.scene.add(this.grass.group); }
     if (data.sideRoads) this.scene.add(buildSideRoads(data.sideRoads));
     const w = route.data.world;
     const fogFar = (this.scene.fog as THREE.Fog).far;
@@ -113,15 +120,20 @@ export class World {
     if (this.first) { this.camPos.copy(pos); this.camLook.copy(look); this.first = false; }
     this.camera.position.copy(this.camPos);
     this.camera.lookAt(this.camLook);
+    if (this.debugView) {
+      const [fx, fy, fz] = this.debugView.from, [tx, ty, tz] = this.debugView.to;
+      this.camera.position.set(fx, fz, -fy); this.camera.lookAt(tx, tz, -ty);
+    }
     this.avatar.root.visible = this.cameraMode !== 'Ego';
 
     // Detailstufen nachführen (alle 0,4 s)
     this.lodTimer -= dt;
-    if (this.lodTimer <= 0) { this.lodTimer = 0.4; this.trees?.update(this.camera.position); this.buildings?.update(this.camera.position); }
+    if (this.lodTimer <= 0) { this.lodTimer = 0.4; this.trees?.update(this.camera.position); this.buildings?.update(this.camera.position); this.grass?.update(this.camera.position); }
 
     // Schatten-Kamera folgt dem Avatar
     this.sun.position.copy(a.position).addScaledVector(SUN, 600);
     this.sky.update(dt);
+    shaderTime.value += dt;
     this.sun.target.position.copy(a.position);
     this.renderer.render(this.scene, this.camera);
   }

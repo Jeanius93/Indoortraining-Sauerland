@@ -10,7 +10,8 @@ export interface FurnitureData {
   lights: [number, number][];
 }
 
-const HW = (route: Route, d: number) => (route.data.surface ?? []).some(s => d >= s.from && d <= s.to) ? 1.7 : 2.8;
+const HW = (route: Route, d: number) => (route.data.surface ?? []).some(s => d >= s.from && d <= s.to) ? 1.7
+  : (route.data.width?.[Math.min(route.n - 1, Math.round(d / route.data.step))] ?? 5.6) / 2;
 
 /** Punkt neben der Strecke: d Meter, Seite (+1 links / −1 rechts), Abstand von der Mitte, Höhe über Fahrbahn */
 function place(route: Route, d: number, side: number, off: number, lift = 0) {

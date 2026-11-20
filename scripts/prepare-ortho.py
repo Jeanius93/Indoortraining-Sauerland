@@ -6,7 +6,7 @@ Aufruf: python3 scripts/prepare-ortho.py public/routes/hausrunde
 """
 import json, math, os, sys
 import numpy as np
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageFilter
 from scipy import ndimage
 
 route_dir = sys.argv[1]
@@ -15,6 +15,7 @@ route = json.load(open(os.path.join(route_dir, 'route.json')))
 T = route['terrain']; x0, y0, cell, nx, ny = T['x0'], T['y0'], T['cell'], T['nx'], T['ny']
 lat0, lon0 = route['origin']['lat'], route['origin']['lon']
 out_dir = os.path.join(route_dir, 'ortho'); os.makedirs(out_dir, exist_ok=True)
+fine_dir = os.path.join(route_dir, 'ortho1'); os.makedirs(fine_dir, exist_ok=True)
 
 # ---------- Koordinaten (wie prepare-landuse.py) ----------
 a, f, k0 = 6378137.0, 1 / 298.257223563, 0.9996
@@ -53,33 +54,41 @@ def crop(Emin, Emax, Nmin, Nmax):
 # ---------- Kacheln wie im Client (1 km = round(1000/cell) Zellen) ----------
 CH = round(1000 / cell)
 rx, ry = np.array(route['x']), np.array(route['y'])
-manifest = {}
+
+def render(ci, cj, cx0, cy0, wM, hM, mpp, target, quality):
+    tw, th = math.ceil(wM / mpp), math.ceil(hM / mpp)
+    # Affine Abbildung lokal → UTM aus drei Ecken (Fehler über 1 km im cm-Bereich)
+    Ea, Na = local_to_utm(cx0, cy0); Eb, Nb = local_to_utm(cx0 + 1000, cy0); Ec, Nc = local_to_utm(cx0, cy0 + 1000)
+    tx = (np.arange(tw) + 0.5) * mpp; ty = (np.arange(th)[::-1] + 0.5) * mpp   # Bildzeile 0 = Norden
+    X, Y = np.meshgrid(tx, ty)
+    E = Ea + (Eb - Ea) * X / 1000 + (Ec - Ea) * Y / 1000
+    N = Na + (Nb - Na) * X / 1000 + (Nc - Na) * Y / 1000
+    m, mE, mN = crop(E.min() - 2, E.max() + 2, N.min() - 2, N.max() + 2)
+    sig = max(0.35, mpp / 2.5)
+    rows, cols = (mN - N) - 0.5, (E - mE) - 0.5
+    img = np.zeros((th, tw, 3), np.uint8)
+    for c in range(3):
+        ch = ndimage.gaussian_filter(m[:, :, c].astype(np.float32), sig)
+        img[:, :, c] = np.clip(ndimage.map_coordinates(ch, [rows, cols], order=1, mode='nearest'), 0, 255)
+    im = Image.fromarray(img)
+    im = ImageEnhance.Contrast(im).enhance(1.08); im = ImageEnhance.Color(im).enhance(1.12)
+    if mpp == 1: im = im.filter(ImageFilter.UnsharpMask(radius=1.2, percent=60, threshold=2))
+    im.save(os.path.join(target, f'{ci}_{cj}.jpg'), quality=quality, optimize=True)
+
+manifest, fine = {}, []
 for cj in range(0, ny - 1, CH):
     for ci in range(0, nx - 1, CH):
         ci1, cj1 = min(ci + CH, nx - 1), min(cj + CH, ny - 1)
         cx0, cy0 = x0 + ci * cell, y0 + cj * cell; wM, hM = (ci1 - ci) * cell, (cj1 - cj) * cell
         # Abstand Strecke ↔ Kachelrechteck
         dx = np.maximum(0, np.maximum(cx0 - rx, rx - (cx0 + wM))); dy = np.maximum(0, np.maximum(cy0 - ry, ry - (cy0 + hM)))
-        near = float(np.min(np.hypot(dx, dy))) < 600
-        mpp = 2 if near else 4
-        tw, th = math.ceil(wM / mpp), math.ceil(hM / mpp)
-        # Affine Abbildung lokal → UTM aus drei Ecken (Fehler über 1 km im cm-Bereich)
-        Ea, Na = local_to_utm(cx0, cy0); Eb, Nb = local_to_utm(cx0 + 1000, cy0); Ec, Nc = local_to_utm(cx0, cy0 + 1000)
-        tx = (np.arange(tw) + 0.5) * mpp; ty = (np.arange(th)[::-1] + 0.5) * mpp   # Bildzeile 0 = Norden
-        X, Y = np.meshgrid(tx, ty)
-        E = Ea + (Eb - Ea) * X / 1000 + (Ec - Ea) * Y / 1000
-        N = Na + (Nb - Na) * X / 1000 + (Nc - Na) * Y / 1000
-        m, mE, mN = crop(E.min() - 2, E.max() + 2, N.min() - 2, N.max() + 2)
-        sig = mpp / 2.5
-        rows, cols = (mN - N) - 0.5, (E - mE) - 0.5
-        img = np.zeros((th, tw, 3), np.uint8)
-        for c in range(3):
-            ch = ndimage.gaussian_filter(m[:, :, c].astype(np.float32), sig)
-            img[:, :, c] = np.clip(ndimage.map_coordinates(ch, [rows, cols], order=1, mode='nearest'), 0, 255)
-        im = Image.fromarray(img)
-        im = ImageEnhance.Contrast(im).enhance(1.08); im = ImageEnhance.Color(im).enhance(1.12)
-        im.save(os.path.join(out_dir, f'{ci}_{cj}.jpg'), quality=80 if near else 75, optimize=True)
+        dist = float(np.min(np.hypot(dx, dy)))
+        mpp = 2 if dist < 600 else 4
+        render(ci, cj, cx0, cy0, wM, hM, mpp, out_dir, 80 if mpp == 2 else 75)
         manifest[f'{ci}_{cj}'] = mpp
-json.dump({'chunk': CH, 'tiles': manifest}, open(os.path.join(route_dir, 'ortho.json'), 'w'), separators=(',', ':'))
+        if dist < 250:                                   # 1-m-Variante nahe der Strecke (Desktop)
+            render(ci, cj, cx0, cy0, wM, hM, 1, fine_dir, 78); fine.append(f'{ci}_{cj}')
+json.dump({'chunk': CH, 'tiles': manifest, 'fine': fine}, open(os.path.join(route_dir, 'ortho.json'), 'w'), separators=(',', ':'))
 size = sum(os.path.getsize(os.path.join(out_dir, f)) for f in os.listdir(out_dir))
-print(f'{len(manifest)} Bodentexturen, {sum(1 for v in manifest.values() if v == 2)} davon 2 m, zusammen {size/1e6:.1f} MB')
+fsize = sum(os.path.getsize(os.path.join(fine_dir, f)) for f in os.listdir(fine_dir))
+print(f'{len(manifest)} Bodentexturen ({size/1e6:.1f} MB), davon {len(fine)} zusätzlich in 1 m ({fsize/1e6:.1f} MB)')

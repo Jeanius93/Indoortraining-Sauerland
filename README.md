@@ -40,6 +40,8 @@ npm run build        # Produktions-Build nach dist/
 4. Nutzungskarte (Felder, Wiesen, Wald, Straßen, Wege, Gewässer) und Ortsnamen aus ALKIS
    (GeoPackage „Grundrissdaten vereinfacht“ der betroffenen Kreise von opengeodata.nrw.de):
    `python3 scripts/prepare-landuse.py public/routes/meinestrecke pfad/zu/*.gpkg`
+4b. Strecke auf die echte Straßenmitte legen (danach Schritt 4 wiederholen):
+   `python3 scripts/snap-route.py public/routes/meinestrecke`
 5. Abzweigende Straßen und Radweg-Abschnitte (aus der Nutzungskarte):
    `python3 scripts/prepare-roads.py public/routes/meinestrecke`
 6. Echte Welt aus amtlichen Geodaten NRW (Häuser, Bäume, genaues Gelände):
@@ -50,7 +52,10 @@ npm run build        # Produktions-Build nach dist/
 8. Luftbilder als Bodentextur:
    `python3 scripts/fetch-dop.py public/routes/meinestrecke && python3 scripts/prepare-ortho.py public/routes/meinestrecke`
 
-Benötigte Python-Pakete: `numpy pillow scipy scikit-image`
+9. Dachfarben aus Luftbildern und Sehenswürdigkeiten (Talsperre, Aqua Magis, Türme, Hochspannung):
+   `python3 scripts/prepare-roofs.py public/routes/meinestrecke && python3 scripts/prepare-landmarks.py public/routes/meinestrecke`
+
+Benötigte Python-Pakete: `numpy pillow scipy scikit-image tifffile imagecodecs`
 
 ### Datenquellen
 

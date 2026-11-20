@@ -24,7 +24,7 @@ if (!fs.existsSync(path.join(baseDir, 'route.json'))) {
 }
 const current = JSON.parse(fs.readFileSync(path.join(dir, 'route.json'), 'utf8'));
 const route = JSON.parse(fs.readFileSync(path.join(baseDir, 'route.json'), 'utf8'));
-for (const k of ['places', 'landuse', 'surface']) if (current[k]) route[k] = current[k]; // von prepare-landuse.py / prepare-roads.py
+for (const k of ['places', 'landuse', 'surface', 'width']) if (current[k]) route[k] = current[k]; // von prepare-landuse.py / prepare-roads.py
 const T = route.terrain, { x0, y0, cell, nx, ny } = T;
 const oldGrid = new Int16Array(fs.readFileSync(path.join(baseDir, 'terrain.bin')).buffer.slice(0));
 
@@ -158,13 +158,31 @@ function triangulate(ring) {
   const flat = []; for (const p of ring) flat.push(p[u], p[v]);
   return earcut(flat);
 }
-const buildings = { pos: [], col: [], count: 0, ranges: [] }; // ranges: [ersterVertex, letzterVertex+1] je Gebäude
+const buildings = { pos: [], col: [], count: 0, ranges: [] };
+const towers = []; // ranges: [ersterVertex, letzterVertex+1] je Gebäude
 function parseLod2(file, E0, N0, affine) {
   const xml = fs.readFileSync(file, 'utf8'), fps = [];
   for (const m of xml.matchAll(/<bldg:Building gml:id="([^"]+)">([\s\S]*?)<\/bldg:Building>/g)) {
     const [, id, body] = m;
     const fn = body.match(/<bldg:function>([^<]+)/)?.[1] ?? '', roofType = body.match(/<bldg:roofType>([^<]+)/)?.[1] ?? '';
     const style = styleFor(id, fn, roofType);
+    const measured = Number(body.match(/<bldg:measuredHeight[^>]*>([^<]+)/)?.[1] ?? 0);
+    // Hohe Türme/Masten bekommen eigene Modelle im Client → hier nur merken
+    if ((fn.startsWith('51002_12') || fn.startsWith('51001_10')) && measured > 25) {
+      const pl = body.match(/<gml:posList[^>]*>([^<]+)/); if (pl) {
+        const v = pl[1].trim().split(/\s+/).map(Number); let sx = 0, sy = 0, sz = Infinity, c = 0, ex = -Infinity, nx_ = Infinity;
+        for (let q = 0; q + 2 < v.length; q += 3) { sx += v[q]; sy += v[q + 1]; sz = Math.min(sz, v[q + 2]); c++; ex = Math.max(ex, v[q]); nx_ = Math.min(nx_, v[q]); }
+        const [lx, ly] = affine(sx / c, sy / c);
+        // Grundfläche für die Baum-Maske (sonst erkennt das nDOM den Turm als Baumkrone)
+        const rr = Math.max(4, (ex - nx_) / 2 + 3), cxu = sx / c, cyu = sy / c;
+        fps.push(Array.from({ length: 12 }, (_, q2) => [cxu + Math.cos(q2 / 12 * Math.PI * 2) * rr, cyu + Math.sin(q2 / 12 * Math.PI * 2) * rr]));
+        if (!inBox(lx, ly, 30)) continue;
+        towers.push({ x: Math.round(lx * 10) / 10, y: Math.round(ly * 10) / 10, z: Math.round(sz * 10) / 10, height: measured, size: Math.round((ex - nx_) * 10) / 10, fn });
+      }
+      continue;
+    }
+    // Brücken und Überdachungen: nur Dach/Fahrbahnplatte, keine Wände bis zum Boden
+    const openStructure = fn.startsWith('53001') || fn.startsWith('51009_16');
     const surfaces = [];
     let groundMin = Infinity, cxs = 0, cys = 0, cn = 0;
     for (const s of body.matchAll(/<bldg:(RoofSurface|WallSurface|GroundSurface)[\s\S]*?<\/bldg:\1>/g)) {
@@ -173,6 +191,7 @@ function parseLod2(file, E0, N0, affine) {
         for (let i = 0; i + 2 < v.length; i += 3) ring.push([v[i], v[i + 1], v[i + 2]]);
         if (ring.length > 3 && ring[0].every((c, k) => c === ring.at(-1)[k])) ring.pop();
         if (s[1] === 'GroundSurface') { fps.push(ring.map(p => [p[0], p[1]])); for (const p of ring) { groundMin = Math.min(groundMin, p[2]); cxs += p[0]; cys += p[1]; cn++; } continue; }
+        if (openStructure && s[1] === 'WallSurface') continue;
         surfaces.push({ kind: s[1], ring: s[1] === 'WallSurface' ? simplifyRing(ring) : ring });
       }
     }
@@ -193,7 +212,7 @@ function parseLod2(file, E0, N0, affine) {
         buildings.col.push(color);
       }
     }
-    buildings.ranges.push([vStart, buildings.pos.length / 3]);
+    buildings.ranges.push([vStart, buildings.pos.length / 3, openStructure]);
   }
   return fps;
 }
@@ -259,8 +278,8 @@ function processNdom(t, mask, E0, N0, affine) {
     let crown = Math.min(7, Math.max(1.2, rs / 8));
     // Spitze Krone (Nadelbaum) vs. runde Krone (Laubbaum): Höhenabfall im Ring 2–3 m
     let ring = 0, rn = 0;
-    for (let b = -3; b <= 3; b++) for (let a = -3; a <= 3; a++) { const q = a * a + b * b; if (q < 4 || q > 9) continue; ring += H[(j + b) * S + i + a]; rn++; }
-    const sharp = (h - ring / rn) / h;
+    for (let b = -3; b <= 3; b++) for (let a = -3; a <= 3; a++) { const q = a * a + b * b; if (q < 4 || q > 9 || i + a < 0 || i + a >= S || j + b < 0 || j + b >= S) continue; ring += H[(j + b) * S + i + a]; rn++; }
+    const sharp = rn ? (h - ring / rn) / h : 0;
     if (Rm > 4.5) crown = Math.max(crown, Rm * 0.7);
     // Stamm nicht auf Straße/Weg/Wasser/Acker; Krone darf nicht über Fahrbahnen ragen → Krone verkleinern oder Baum weglassen
     if (NO_TRUNK.has(luAt(lx, ly))) { skipped++; continue; }
@@ -386,7 +405,7 @@ for (const r of sideRoads) {
 // (den Rest verdeckt die Böschung im Client).
 const radweg = route.surface ?? [];
 const roadPts = [];
-route.x.forEach((x, k) => { const d = k * route.step; const rw = radweg.some(s => d >= s.from && d <= s.to); roadPts.push([x, route.y[k], route.h[k], rw ? 1.7 : 2.8]); });
+route.x.forEach((x, k) => { const d = k * route.step; const rw = radweg.some(s => d >= s.from && d <= s.to); roadPts.push([x, route.y[k], route.h[k], rw ? 1.7 : (route.width?.[k] ?? 5.6) / 2]); });
 for (const r of sideRoads) r.pts.forEach(([x, y], k) => roadPts.push([x, y, r.h[k], r.w[k] / 2]));
 const ptHash = new Map();
 roadPts.forEach((p, k) => { const kk = `${Math.floor(p[0] / HB)}_${Math.floor(p[1] / HB)}`; (ptHash.get(kk) ?? ptHash.set(kk, []).get(kk)).push(k); });
@@ -417,11 +436,11 @@ const meshH = (x, y) => {
 const P = buildings.pos, nV = P.length / 3;
 const outPos = new Uint16Array(nV * 3), outCol = Uint8Array.from(buildings.col);
 const QX = 0.2, QZ = 0.05;
-for (const [from, to] of buildings.ranges) {
+for (const [from, to, open] of buildings.ranges) {
   let minZ = Infinity, minTerrain = Infinity;
   for (let v = from; v < to; v++) minZ = Math.min(minZ, P[v * 3 + 2]);
   for (let v = from; v < to; v++) if (P[v * 3 + 2] <= minZ + 0.5) minTerrain = Math.min(minTerrain, meshH(P[v * 3], P[v * 3 + 1]));
-  const off = (minTerrain - 3) - minZ;
+  const off = open ? 0 : (minTerrain - 3) - minZ;  // offene Bauwerke behalten ihre echte Höhe
   for (let v = from; v < to; v++) {
     outPos[v * 3] = Math.max(0, Math.round((P[v * 3] - x0) / QX)); outPos[v * 3 + 1] = Math.max(0, Math.round((P[v * 3 + 1] - y0) / QX));
     outPos[v * 3 + 2] = Math.round((P[v * 3 + 2] + off) / QZ);
@@ -430,8 +449,9 @@ for (const [from, to] of buildings.ranges) {
 fs.writeFileSync(path.join(dir, 'buildings.bin'), Buffer.concat([Buffer.from(outPos.buffer), Buffer.from(outCol.buffer)]));
 
 // ---------- Bäume speichern ----------
-const sharpSorted = trees.map(t => t[4]).sort((a, b) => a - b);
-const sharpCut = Math.max(0.12, sharpSorted[Math.floor(sharpSorted.length * 0.45)] ?? 0.2);
+const sharpSorted = trees.map(t => t[4]).filter(Number.isFinite).sort((a, b) => a - b);
+const sharpCut = Math.max(0.12, Math.min(0.4, sharpSorted[Math.floor(sharpSorted.length * 0.45)] ?? 0.2));
+console.log(`Kronenspitzen p10/p45/p90: ${[0.1, 0.45, 0.9].map(q => (sharpSorted[Math.floor(sharpSorted.length * q)] ?? 0).toFixed(2)).join(" / ")}`);
 const tb = Buffer.alloc(trees.length * 7);
 trees.forEach(([x, y, h, r, sharp], k) => {
   tb.writeUInt16LE(Math.round((x - x0) / 0.25), k * 7); tb.writeUInt16LE(Math.round((y - y0) / 0.25), k * 7 + 2);
@@ -445,6 +465,7 @@ route.world = {
   trees: { count: trees.length, qxy: 0.25 },
   canopy: true,
 };
+route.towers = towers;
 route.attribution = 'Geodaten: Geobasis NRW (DGM1, nDOM, 3D-Gebäudemodell LoD2) – Datenlizenz Deutschland Zero 2.0';
 fs.writeFileSync(path.join(dir, 'route.json'), JSON.stringify(route));
 const dgmShare = gridFromDgm.reduce((a, b) => a + b, 0) / gridFromDgm.length;
