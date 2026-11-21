@@ -54,7 +54,21 @@ function toast(msg: string, ms = 2600) {
 }
 
 // ---------- Start ----------
+// ---------- immer die neueste Version ----------
+// Die Startseite darf der Browser bis zu 10 min zwischenspeichern. Darum beim Start die aktuelle
+// Versionsnummer frisch vom Server holen und bei Abweichung einmal mit neuer Adresse neu laden.
+async function ensureLatest() {
+  try {
+    const mine = document.documentElement.dataset.v ?? '';
+    const r = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' }); if (!r.ok) return;
+    const { v } = await r.json() as { v: string };
+    const url = new URL(location.href);
+    if (v && v !== mine && url.searchParams.get('v') !== v) { url.searchParams.set('v', v); location.replace(url.toString()); await new Promise(() => {}); }
+  } catch { /* offline: vorhandene Version nutzen */ }
+}
+
 async function init() {
+  await ensureLatest();
   routes = await listRoutes();
   if (!routes.some(r => r.id === settings.route)) settings.route = routes[0]?.id ?? 'hausrunde';
   renderRoutePicker();

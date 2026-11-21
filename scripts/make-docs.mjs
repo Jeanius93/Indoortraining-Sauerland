@@ -10,6 +10,9 @@ if (OUT === 'docs') { for (const f of fs.readdirSync('docs', { withFileTypes: tr
 else fs.rmSync(OUT, { recursive: true, force: true });
 fs.cpSync('dist', OUT, { recursive: true });
 fs.writeFileSync(path.join(OUT, '.nojekyll'), '');
+// Versionsdatei: die App vergleicht beim Start und lädt sich bei Abweichung selbst neu
+const ver = fs.readFileSync('app/index.html', 'utf8').match(/data-v="([^"]+)"/)?.[1] ?? String(Date.now());
+fs.writeFileSync(path.join(OUT, 'version.json'), JSON.stringify({ v: ver }));
 let before = 0, after = 0;
 for (const dir of fs.readdirSync(path.join(OUT, 'routes')).filter(d => fs.statSync(path.join(OUT, 'routes', d)).isDirectory())) {
   if (lean) for (const f of ['ortho', 'ortho1', 'ortho.json', 'buildings.bin']) fs.rmSync(path.join(OUT, 'routes', dir, f), { recursive: true, force: true });

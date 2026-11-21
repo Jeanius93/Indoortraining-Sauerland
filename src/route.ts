@@ -1,4 +1,8 @@
 // Strecke: geglättete Straßenpunkte alle `step` Meter in lokalen Koordinaten (x=Ost, y=Nord, h=Höhe)
+/** Abruf mit Versionskennung: nach jedem Deploy werden alle Streckendaten neu geladen statt aus dem Browser-Speicher */
+const VER = document.documentElement.dataset.v ?? '';
+const vfetch = (url: string) => fetch(url + (url.includes('?') ? '&' : '?') + 'v=' + VER);
+
 export interface RouteData {
   name: string;
   step: number;
@@ -94,13 +98,13 @@ export class Route {
 async function fetchBin(base: string, name: string): Promise<ArrayBuffer> {
   const file = name.includes('.') ? name : `${name}.bin`;
   if (import.meta.env.MODE === 'artifact') {
-    const r = await fetch(`${base}/${file.replace(/\.bin$/, '')}.json`); if (!r.ok) throw new Error(`${name}: ${r.status}`);
+    const r = await vfetch(`${base}/${file.replace(/\.bin$/, '')}.json`); if (!r.ok) throw new Error(`${name}: ${r.status}`);
     const { b64 } = await r.json() as { b64: string };
     const bin = atob(b64), out = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out.buffer;
   }
-  const r = await fetch(`${base}/${file}`); if (!r.ok) throw new Error(`${file}: ${r.status}`);
+  const r = await vfetch(`${base}/${file}`); if (!r.ok) throw new Error(`${file}: ${r.status}`);
   const buf = await r.arrayBuffer(), u = new Uint8Array(buf, 0, 2);
   // gzip-gepackt veröffentlicht (spart ~60 % Ladezeit) → im Browser entpacken
   if (u[0] === 0x1f && u[1] === 0x8b) return new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
@@ -110,19 +114,19 @@ async function fetchBin(base: string, name: string): Promise<ArrayBuffer> {
 export interface RouteInfo { id: string; name: string; length: number; ascent: number; maxGrade: number }
 /** Verfügbare Strecken (routes/index.json) */
 export async function listRoutes(): Promise<RouteInfo[]> {
-  try { const r = await fetch('routes/index.json'); if (r.ok) return await r.json(); } catch { /* egal */ }
+  try { const r = await vfetch('routes/index.json'); if (r.ok) return await r.json(); } catch { /* egal */ }
   return [{ id: 'hausrunde', name: 'Hausrunde', length: 0, ascent: 0, maxGrade: 0 }];
 }
 
 export async function loadRoute(base: string, onProgress?: (msg: string) => void, opts: { fine?: boolean; photo?: boolean } = {}) {
-  const data = await fetch(`${base}/route.json`).then(r => { if (!r.ok) throw new Error(`route.json: ${r.status}`); return r.json() as Promise<RouteData>; });
+  const data = await vfetch(`${base}/route.json`).then(r => { if (!r.ok) throw new Error(`route.json: ${r.status}`); return r.json() as Promise<RouteData>; });
   onProgress?.('Gelände wird geladen …');
   const heights = new Int16Array(await fetchBin(base, 'terrain'));
   const world: WorldData = {};
   // Neuer Stil: Häuser aus houses.json (klein) statt LoD2-Dreiecken, keine Luftbilder → deutlich schneller
   if (!opts.photo) {
     try {
-      const r = await fetch(`${base}/houses.json`);
+      const r = await vfetch(`${base}/houses.json`);
       if (r.ok && (r.headers.get('content-type') ?? '').includes('json')) world.houses = await r.json();
     } catch { /* optional */ }
   }
@@ -137,19 +141,19 @@ export async function loadRoute(base: string, onProgress?: (msg: string) => void
     try { world.rawHeights = new Int16Array(await fetchBin(base, 'terrain_raw')); } catch { /* optional */ }
   }
   try {
-    const r = await fetch(`${base}/landmarks.json`);
+    const r = await vfetch(`${base}/landmarks.json`);
     if (r.ok && (r.headers.get('content-type') ?? '').includes('json')) world.landmarks = await r.json();
   } catch { /* optional */ }
   try {
-    const r = await fetch(`${base}/furniture.json`);
+    const r = await vfetch(`${base}/furniture.json`);
     if (r.ok && (r.headers.get('content-type') ?? '').includes('json')) world.furniture = await r.json();
   } catch { /* optional */ }
   try {
-    const r = await fetch(`${base}/roads.json`);
+    const r = await vfetch(`${base}/roads.json`);
     if (r.ok) world.sideRoads = (await r.json() as { roads: WorldData['sideRoads'] }).roads;
   } catch { /* optional */ }
   if (opts.photo) try {
-    const r = await fetch(`${base}/ortho.json`);
+    const r = await vfetch(`${base}/ortho.json`);
     if (r.ok) {
       const man = await r.json() as { tiles: Record<string, number>; fine?: string[] };
       const fine = new Set(opts.fine ? man.fine ?? [] : []);
@@ -157,7 +161,7 @@ export async function loadRoute(base: string, onProgress?: (msg: string) => void
       let done = 0;
       const worker = async () => {
         for (let k = keys.shift(); k; k = keys.shift()) {
-          const res = await fetch(`${base}/${fine.has(k) ? 'ortho1' : 'ortho'}/${k}.jpg`);
+          const res = await vfetch(`${base}/${fine.has(k) ? 'ortho1' : 'ortho'}/${k}.jpg`);
           if (res.ok) {
             const url = URL.createObjectURL(await res.blob()), img = new Image(); img.src = url;
             await img.decode();

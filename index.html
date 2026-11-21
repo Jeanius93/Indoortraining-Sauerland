@@ -4,8 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sauerland Indoor</title>
-<meta http-equiv="refresh" content="0; url=docs/">
-<script>location.replace('docs/' + location.search + location.hash);</script>
+<script>/* jedes Mal neue Adresse: der Browser holt immer die aktuelle Seite */
+var q = new URLSearchParams(location.search); q.set('t', Date.now());
+location.replace('docs/?' + q + location.hash);</script>
+<noscript><meta http-equiv="refresh" content="0; url=docs/"></noscript>
 <style>body{margin:0;display:grid;place-items:center;height:100vh;background:#0f1714;color:#eef3ef;font:18px system-ui,sans-serif}a{color:#ffb547}</style>
 </head>
 <body><p>Sauerland Indoor wird geöffnet … <a href="docs/">Weiter</a></p></body>

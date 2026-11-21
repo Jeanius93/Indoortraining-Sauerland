@@ -12,8 +12,10 @@ Firefox hat kein Web Bluetooth) und testet auch am Handy. Oberfläche und Code-K
 - `npm test` – FIT-Test (`tests/fit.test.mjs`).
 - `npm run deploy` – Streckenliste (`scripts/make-index.mjs`), Build, Kopie nach `docs/` (gzip-komprimierte .bin, ohne Luftbilder).
 - **Live:** GitHub Pages vom Branch `claude/sleepy-turing-e9avo2`, Root-`index.html` leitet auf `docs/` um:
-  https://jeanius93.github.io/Indoortraining-Sauerland/ – vor jedem Deploy `data-v` in `app/index.html` hochzählen
-  (Cache-Bruch, Format `JJJJ-MM-TTx`), danach live prüfen (curl auf `docs/?t=…`).
+  https://jeanius93.github.io/Indoortraining-Sauerland/ – **Nutzer muss über den Link immer die neueste Version bekommen.**
+  `npm run deploy` setzt `data-v` automatisch (`scripts/bump-version.mjs`) und schreibt `docs/version.json`; die App vergleicht
+  beim Start und lädt sich bei Abweichung einmal neu, alle Streckendaten werden mit `?v=` geladen, die Root-Weiterleitung
+  hängt `?t=<Zeit>` an. Alte Dateien in `docs/` werden beim Deploy gelöscht. Danach live prüfen (`curl docs/version.json?t=…`).
 - URL-Parameter: `?km=5.3` (Startpunkt), `?q=low|high` (Grafikstufe), `?leben=0` (ohne Tiere/Autos/Gärten), `?style=luftbild` (alter Look).
 - Testen ohne GPU: Playwright/Chromium mit SwiftShader (`--use-angle=swiftshader`), Bildrate dort nicht aussagekräftig,
   nur Optik/Fehler/Dreiecks- und Draw-Call-Zahlen. `window.__sauerland.world` gibt Zugriff auf die Welt (`debugView` = feste Kamera).
