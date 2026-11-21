@@ -165,7 +165,9 @@ export function buildRoad(route: Route, towns: { from: number; to: number }[] = 
     while (e < n - 1 && state(e + 1) === st) e++;
     if (st === 4) { k = e + 1; continue; }     // dieselbe Straße wurde schon bei der ersten Durchfahrt gezeichnet
     const pts: RibbonPt[] = [];
-    for (let i = Math.max(0, k - 1); i <= Math.min(n - 1, e + 1); i++) pts.push({ x: x[i], y: y[i], h: h[i], hw: rad ? 1.7 : (route.data.width?.[i] ?? 5.6) / 2,
+    // nicht in einen Kreisverkehr hinein verlängern (dort liegt die Kreisfahrbahn)
+    const i0 = k > 0 && !rb(k - 1) ? k - 1 : k, i1 = e < n - 1 && !rb(e + 1) ? e + 1 : e;
+    for (let i = i0; i <= i1; i++) pts.push({ x: x[i], y: y[i], h: h[i], hw: rad ? 1.7 : (route.data.width?.[i] ?? 5.6) / 2,
       mL: inMouth(junctions, route, i * step, 1) ? 0 : 1, mR: inMouth(junctions, route, i * step, -1) ? 0 : 1 });
     // innerorts: gepflasterter Gehweg statt Grasbankett
     group.add(...ribbon(pts, rad ? mats.radweg : mats.strasse, town ? paving : grass, 0.12, rad ? 26 : 24, 5, 5, town ? 2.0 : 1.5));

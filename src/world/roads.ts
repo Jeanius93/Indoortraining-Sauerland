@@ -194,6 +194,16 @@ export function buildRoadNetwork(route: Route, data: { roads: SideRoad[]; rings?
         if (a.s?.[e] !== 2) continue; const q = e === 0 ? a.p[0] : a.p[a.p.length - 1];
         if (Math.abs(Math.hypot(q[0] - R.x, q[1] - R.y) - R.r) < 1.5) armAng.push([Math.atan2(q[1] - R.y, q[0] - R.x), ((e === 0 ? a.w[0] : a.w[a.w.length - 1]) / 2 + 4) / R.r]);
       }
+      // auch Ein- und Ausfahrt der Strecke
+      if (R) for (const w of route.data.roundabouts ?? []) {
+        if (data.rings![w.ring] !== R) continue;
+        const k0 = Math.round(w.from / route.data.step), k1 = Math.round(w.to / route.data.step);
+        for (let q = Math.max(0, k0 - 10); q <= Math.min(route.n - 1, k1 + 10); q++) {
+          if (q > k0 + 1 && q < k1 - 1) continue;                       // Punkte auf dem Ring selbst nicht
+          const dq = Math.hypot(route.data.x[q] - R.x, route.data.y[q] - R.y);
+          if (dq < R.r + R.w / 2 + 6) armAng.push([Math.atan2(route.data.y[q] - R.y, route.data.x[q] - R.x), (hwRoute(route, q) + 2.5) / R.r]);
+        }
+      }
       skirtOff = (k, side) => side > 0 || (!!R && armAng.some(([t, w]) => Math.abs(((Math.atan2(pts[k].y - R.y, pts[k].x - R.x) - t + 3 * Math.PI) % (2 * Math.PI)) - Math.PI) < w));
     }
     const [g, sg] = band(pts, LIFT[kind], kind, town, closed, skirtOff);
@@ -210,6 +220,15 @@ export function buildRoadNetwork(route: Route, data: { roads: SideRoad[]; rings?
       const p = pts[i], R = data.rings.find(q => Math.abs(Math.hypot(p.x - q.x, p.y - q.y) - q.r) < 1.5); if (!R) continue;
       const dc = Math.hypot(p.x - R.x, p.y - R.y) || 1, ox = R.x + (p.x - R.x) / dc * (R.r + R.w / 4), oy = R.y + (p.y - R.y) / dc * (R.r + R.w / 4);
       tile(ox, oy).road.push(disc(ox, oy, p.h + LIFT[5] + 0.006, p.hw + 0.9));
+    }
+  }
+  // Ein- und Ausfahrt der Strecke am Kreisverkehr: Fläche über der äußeren Randlinie, schließt an das Streckenband an
+  for (const w of route.data.roundabouts ?? []) {
+    const R = data.rings?.[w.ring]; if (!R) continue;
+    for (const d of [w.from, w.to]) {
+      const k = Math.round(d / route.data.step), px = route.data.x[k], py = route.data.y[k], dc = Math.hypot(px - R.x, py - R.y) || 1;
+      const ox = R.x + (px - R.x) / dc * (R.r + R.w / 4), oy = R.y + (py - R.y) / dc * (R.r + R.w / 4);
+      tile(ox, oy).road.push(disc(ox, oy, route.data.h[k] + LIFT[5] + 0.006, hwRoute(route, Math.max(0, k - 3)) + 1.2));
     }
   }
   // Knoten zwischen Nebenstraßen: runde Asphaltfläche deckt Überlappungen ab
@@ -290,6 +309,7 @@ export function buildRoadNetwork(route: Route, data: { roads: SideRoad[]; rings?
   // Kacheln zusammenfügen; ferne Kacheln ausblenden (der Dunst verdeckt sie ohnehin)
   const parts: { mesh: THREE.Object3D; cx: number; cy: number }[] = [];
   for (const t of tiles.values()) for (const [list, m] of [[t.road, mat], [t.skirt, skirtMat]] as const) {
+    if (!list.length) continue;                                     // Kachel nur mit Einmündungs-/Knotenflächen
     const g = mergeGeometries(list); if (!g) continue;
     const mesh = new THREE.Mesh(g, m); mesh.receiveShadow = true; group.add(mesh); parts.push({ mesh, cx: t.cx, cy: t.cy });
   }
