@@ -1,6 +1,7 @@
 // Gelände aus dem Höhenraster, Straße als Band, Wald als Instanzen.
 // Koordinaten in Three.js: X = Ost, Y = oben, Z = −Nord
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Route } from '../route';
 import { fbm, rng } from './noise';
 import { ENS, paint } from './lookflag';
@@ -159,9 +160,18 @@ export function buildRoad(route: Route, towns: { from: number; to: number }[] = 
 /** Abzweigende Straßen (ohne Markierung), etwas tiefer als die Hauptstrecke, damit diese an Einmündungen oben liegt */
 export function buildSideRoads(roads: { w: number[]; p: number[][] }[]) {
   const group = new THREE.Group(), mat = roadMat('neben', -1), skirtMat = skirtMaterial();
+  // in 1-km-Kacheln zu wenigen Meshes zusammenfassen (sonst über 1000 Zeichenaufrufe)
+  const tiles = new Map<string, { road: THREE.BufferGeometry[]; skirt: THREE.BufferGeometry[] }>();
   for (const r of roads) {
     if (r.p.length < 2) continue;
-    group.add(...ribbon(r.p.map((p, i) => ({ x: p[0], y: p[1], h: p[2], hw: r.w[i] / 2 })), mat, skirtMat, 0.06, 24, 3, 3, 0.8));
+    const [road, skirt] = ribbon(r.p.map((p, i) => ({ x: p[0], y: p[1], h: p[2], hw: r.w[i] / 2 })), mat, skirtMat, 0.06, 24, 3, 3, 0.8);
+    const k = `${Math.floor(r.p[0][0] / 1000)}_${Math.floor(r.p[0][1] / 1000)}`;
+    const t = tiles.get(k) ?? tiles.set(k, { road: [], skirt: [] }).get(k)!;
+    t.road.push(road.geometry); t.skirt.push(skirt.geometry);
+  }
+  for (const t of tiles.values()) for (const [list, m] of [[t.road, mat], [t.skirt, skirtMat]] as const) {
+    const g = mergeGeometries(list); if (!g) continue;
+    const mesh = new THREE.Mesh(g, m); mesh.receiveShadow = true; group.add(mesh);
   }
   return group;
 }
@@ -241,10 +251,10 @@ export function makeRouteDistance(route: Route, t: Route['data']['terrain'], cel
 export class TreeField {
   readonly group = new THREE.Group();
   count = 0;
-  private chunks: { center: THREE.Vector3; near: THREE.Object3D; far: THREE.Object3D }[] = [];
+  private chunks: { center: THREE.Vector3; near: THREE.Object3D; mid: THREE.Object3D; far: THREE.Object3D }[] = [];
   constructor(hf: Heightfield, data: Uint8Array, routeDist: (x: number, y: number) => number, quality: 'low' | 'high', private nearDist: number, private farDist: number) {
     const { x0, y0 } = hf.t, dv = new DataView(data.buffer, data.byteOffset, data.byteLength), n = data.byteLength / 7;
-    const C = 1000, buckets = new Map<string, { spruce: THREE.Matrix4[]; leaf: THREE.Matrix4[]; cx: number; cy: number }>();
+    const C = 500, buckets = new Map<string, { spruce: THREE.Matrix4[]; leaf: THREE.Matrix4[]; cx: number; cy: number }>();
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
     const r = rng(3);
     for (let i = 0; i < n; i++) {
@@ -271,11 +281,11 @@ export class TreeField {
           transformed.z += cos(time * 1.1 + ph) * 0.015 * transformed.y * transformed.y;`);
     };
     for (const b of buckets.values()) {
-      const near = new THREE.Group(), far = new THREE.Group();
+      const near = new THREE.Group(), mid = new THREE.Group(), far = new THREE.Group();
       const tints = [b.spruce.map(() => 1 - r() * 0.15), b.leaf.map(() => 1 - r() * 0.3)];
-      ([[geo.spruceNear, geo.spruceFar, b.spruce, tints[0]], [geo.leafNear, geo.leafFar, b.leaf, tints[1]]] as const).forEach(([gn, gf, list, tint]) => {
+      ([[geo.spruceNear, geo.spruceFar, geo.spruceLow, b.spruce, tints[0]], [geo.leafNear, geo.leafFar, geo.leafLow, b.leaf, tints[1]]] as const).forEach(([gn, gm, gf, list, tint]) => {
         if (!list.length) return;
-        for (const [g, target] of [[gn, near], [gf, far]] as const) {
+        for (const [g, target] of [[gn, near], [gm, mid], [gf, far]] as const) {
           const im = new THREE.InstancedMesh(g, mat, list.length), c = new THREE.Color();
           im.castShadow = false;
           list.forEach((mm, i) => { im.setMatrixAt(i, mm); c.setScalar(tint[i]); im.setColorAt(i, c); });
@@ -283,17 +293,18 @@ export class TreeField {
         }
       });
       const center = new THREE.Vector3(b.cx, hf.at(b.cx, b.cy), -b.cy);
-      near.visible = false; far.visible = false;
-      this.group.add(near, far);
-      this.chunks.push({ center, near, far });
+      near.visible = false; mid.visible = false; far.visible = false;
+      this.group.add(near, mid, far);
+      this.chunks.push({ center, near, mid, far });
     }
   }
   /** Detailstufe je Kachel nach Abstand zur Kamera wählen */
   update(cam: THREE.Vector3) {
     for (const c of this.chunks) {
-      const d = Math.hypot(c.center.x - cam.x, c.center.z - cam.z) - 710; // Abstand zum Kachelrand (grob)
+      const d = Math.hypot(c.center.x - cam.x, c.center.z - cam.z) - 355; // Abstand zum Kachelrand (grob)
       c.near.visible = d < this.nearDist;
-      c.far.visible = !c.near.visible && d < this.farDist;
+      c.mid.visible = !c.near.visible && d < 900;
+      c.far.visible = !c.near.visible && !c.mid.visible && d < this.farDist;
     }
   }
 }
@@ -335,6 +346,8 @@ function lushGeometries() {
     spruceFar: shadeByHeight(new THREE.ConeGeometry(0.19, 0.86, 8, 1, true).translate(0, 0.57, 0), new THREE.Color('#122a12'), new THREE.Color('#2e5528'), 0.14, 1.0),
     leafNear: mergeGeos([trunk, ...branches, leaf]),
     leafFar: shadeByHeight(new THREE.IcosahedronGeometry(0.3, 1).scale(1, 1.25, 1).translate(0, 0.66, 0), new THREE.Color('#244a16'), new THREE.Color('#6c9c38'), 0.3, 1.0),
+    spruceLow: shadeByHeight(new THREE.ConeGeometry(0.19, 0.86, 5, 1, true).translate(0, 0.57, 0), new THREE.Color('#122a12'), new THREE.Color('#2e5528'), 0.14, 1.0),
+    leafLow: shadeByHeight(new THREE.OctahedronGeometry(0.3, 1).scale(1, 1.25, 1).translate(0, 0.66, 0), new THREE.Color('#244a16'), new THREE.Color('#6c9c38'), 0.3, 1.0),
   };
 }
 function mergeGeos(list: THREE.BufferGeometry[]) {
@@ -369,6 +382,8 @@ function treeGeometries() {
       blob(0, 0.6, 0, 0.24, '#4c7232'), blob(0.11, 0.72, 0.05, 0.19, '#5a823a'), blob(-0.1, 0.7, -0.06, 0.2, '#466c2f'), blob(0.02, 0.85, -0.02, 0.17, '#638c40'),
     ]),
     leafFar: mergeColored([[new THREE.IcosahedronGeometry(0.3, 0).scale(1, 1.4, 1).translate(0, 0.64, 0), '#4f7533']]),
+    spruceLow: mergeColored([[new THREE.ConeGeometry(0.19, 0.85, 5, 1, true).translate(0, 0.575, 0), '#2a4a2f']]),
+    leafLow: mergeColored([[new THREE.IcosahedronGeometry(0.3, 0).scale(1, 1.4, 1).translate(0, 0.64, 0), '#4f7533']]),
   };
 }
 
@@ -617,14 +632,29 @@ export function buildLanduseTerrain(hf: Heightfield, lu: Uint8Array, info: { px:
       c.copy(white).lerp(rock, rockShare);
       col[k * 3] = c.r; col[k * 3 + 1] = c.g; col[k * 3 + 2] = c.b;
     }
-    const idx: number[] = [];
-    for (let j = 0; j < nj - 1; j++) for (let i = 0; i < ni - 1; i++) { const a = j * ni + i, b = a + 1, d = a + ni, e = d + 1; idx.push(a, b, e, a, e, d); }
+    // Detailstufen: volles Gitter, jeder 2. und jeder 4. Punkt; Schürze am Rand verdeckt Lücken zwischen Stufen
+    const border: number[] = [];
+    for (let i = 0; i < ni; i++) border.push(i); for (let j = 1; j < nj; j++) border.push(j * ni + ni - 1);
+    for (let i = ni - 2; i >= 0; i--) border.push((nj - 1) * ni + i); for (let j = nj - 2; j > 0; j--) border.push(j * ni);
+    const nv = ni * nj, nb = border.length;
+    const P2 = new Float32Array((nv + nb) * 3), U2 = new Float32Array((nv + nb) * 2), C2 = new Float32Array((nv + nb) * 3), N2 = new Float32Array((nv + nb) * 3);
+    P2.set(pos); U2.set(uv); C2.set(col); N2.set(nor);
+    border.forEach((b, k) => { const o = nv + k; for (let a = 0; a < 3; a++) { P2[o * 3 + a] = pos[b * 3 + a]; C2[o * 3 + a] = col[b * 3 + a]; N2[o * 3 + a] = nor[b * 3 + a]; } P2[o * 3 + 1] -= 12; U2[o * 2] = uv[b * 2]; U2[o * 2 + 1] = uv[b * 2 + 1]; });
+    const skirt: number[] = [];
+    for (let k = 0; k < nb; k++) { const a = border[k], b = border[(k + 1) % nb], a2 = nv + k, b2 = nv + (k + 1) % nb; skirt.push(a, a2, b, b, a2, b2, a, b, a2, b, b2, a2); }
+    const lods = [1, 2, 4].map(st => {
+      const idx: number[] = [];
+      for (let j = 0; j < nj - 1; j += st) for (let i = 0; i < ni - 1; i += st) {
+        const j2 = Math.min(nj - 1, j + st), i2 = Math.min(ni - 1, i + st), a = j * ni + i, b = j * ni + i2, d = j2 * ni + i, e = j2 * ni + i2; idx.push(a, b, e, a, e, d);
+      }
+      return new THREE.Uint32BufferAttribute(idx.concat(skirt), 1);
+    });
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
-    g.setIndex(idx);
+    g.setAttribute('position', new THREE.BufferAttribute(P2, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(U2, 2));
+    g.setAttribute('color', new THREE.BufferAttribute(C2, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(N2, 3));
+    g.setIndex(lods[0]); g.userData.lods = lods;
     let mesh: THREE.Mesh;
     if (photo) {
       // Luftbild enthält bereits Licht und Schatten → unbeleuchtet, nur Hangschattierung (Vertexfarbe) + Detailstruktur
@@ -659,6 +689,17 @@ export function buildLanduseTerrain(hf: Heightfield, lu: Uint8Array, info: { px:
     group.add(mesh);
   }
   return group;
+}
+
+/** Gelände-Detailstufe je Kachel nach Abstand zur Kamera (Kachelrand) */
+export function updateTerrainLod(group: THREE.Object3D, cam: THREE.Vector3) {
+  for (const m of group.children) {
+    const g = (m as THREE.Mesh).geometry; const lods = g?.userData.lods as THREE.BufferAttribute[] | undefined; if (!lods) continue;
+    if (!g.boundingSphere) g.computeBoundingSphere();
+    const s = g.boundingSphere!, d = Math.hypot(s.center.x - cam.x, s.center.z - cam.z) - 700;
+    const want = lods[d < 500 ? 0 : d < 1600 ? 1 : 2];
+    if (g.index !== want) g.setIndex(want);
+  }
 }
 
 /** Gebäudematerial: Fenster (Stockwerke à 2,9 m, Achsen à 3,1 m) und Dachdeckung per Shader – blendet mit der Entfernung aus */

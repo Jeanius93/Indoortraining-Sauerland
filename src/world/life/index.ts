@@ -22,7 +22,7 @@ export class Life {
   }
   update(dt: number, cam: THREE.Vector3, rider: THREE.Vector3, riderD: number, speed: number, riderLat: number, renderer: THREE.WebGLRenderer, camera: THREE.PerspectiveCamera) {
     this.timer -= dt;
-    if (this.timer <= 0) { this.timer = 0.4; this.roadside.update(cam); this.traffic.parked.update(cam); }
+    if (this.timer <= 0) { this.timer = 0.4; this.roadside.update(cam); this.traffic.parked.update(cam); this.village.set.update(cam); }
     this.village.update(dt, cam, renderer, camera);
     this.animals.update(dt, cam, rider);
     this.traffic.update(dt, riderD, speed, riderLat);

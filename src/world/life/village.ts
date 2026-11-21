@@ -20,7 +20,7 @@ function geometries() {
     g.fillStyle = '#2f3a2f'; g.fillRect(0, 0, 6, 128); g.fillRect(0, 0, 256, 5); }) });
   return {
     lambert, hedge, glass, picketMat, meshMat,
-    hedgeG: box(1.02, 1.0, 0.7, 0, 0.5, 0),
+    hedgeG: box(1.0, 1.0, 0.7, 0, 0.5, 0),
     picket: box(2, 0.95, 0.03, 0, 0.47, 0),
     mesh: box(2, 1.2, 0.02, 0, 0.6, 0),
     wood: merge([[box(0.1, 1.0, 0.1, -0.95, 0.5, 0), '#6b5034'], ...[0.25, 0.55, 0.85].map(h => [box(2, 0.1, 0.03, 0, h, 0.04), '#86663f'] as [THREE.BufferGeometry, string])]),
@@ -86,14 +86,20 @@ export class Village {
       const ok = (x: number, y: number, gap = 0.9) => routeNear(x, y) > gap && !houses.inside(x, y, 0.4, hi) && !FOREST.has(land.at(x, y)) && land.at(x, y) !== 8;
       if (kind) for (const e of edges) {
         const len = e.ea ? hb * 2 : ha * 2, seg = kind === 'hedge' ? 1.0 : 2.0, nseg = Math.floor(len / seg);
+        const yaw = e.ea ? ang + Math.PI / 2 : ang, hh = 0.85 + r() * 0.5;
+        let run: number[] = [];
+        const flush = () => {            // Hecke: zusammenhängende Stücke als ein langer Quader
+          if (!run.length) return;
+          const t = (run[0] + run[run.length - 1]) / 2, [x, y] = e.ea ? wp(e.ea * ha, t) : wp(t, e.eb * hb);
+          S.add('hedge', mat(x, y, hf.at(x, y) - 0.05, yaw, new THREE.Vector3(run.length * seg, hh, 1))); run = [];
+        };
         for (let k = 0; k < nseg; k++) {
           const t = -len / 2 + (k + 0.5) * seg;
-          if (e === front && Math.abs(t) < 1.8) continue;                        // Einfahrt
           const [x, y] = e.ea ? wp(e.ea * ha, t) : wp(t, e.eb * hb);
-          if (!ok(x, y)) continue;
-          const yaw = e.ea ? ang + Math.PI / 2 : ang;
-          S.add(kind, mat(x, y, hf.at(x, y) - 0.05, yaw, kind === 'hedge' ? new THREE.Vector3(1, 0.85 + r() * 0.5, 1) : 1));
+          if ((e === front && Math.abs(t) < 1.8) || !ok(x, y) || (kind === 'hedge' && run.length >= 8)) { flush(); if ((e === front && Math.abs(t) < 1.8) || !ok(x, y)) continue; }
+          if (kind === 'hedge') run.push(t); else S.add(kind, mat(x, y, hf.at(x, y) - 0.05, yaw));
         }
+        flush();
       }
       // Briefkasten und Mülltonnen an der Einfahrt
       const fa = front.ea * (front.ea ? ha - 0.5 : 0), fb = front.eb * (front.eb ? hb - 0.5 : 0);
@@ -202,7 +208,7 @@ export class Village {
     }
     S.build(); this.group.add(S.group);
   }
-  update(dt: number, cam: THREE.Vector3, renderer: THREE.WebGLRenderer, camera: THREE.PerspectiveCamera) { this.set.update(cam); this.smoke?.update(dt, cam, renderer, camera); }
+  update(dt: number, cam: THREE.Vector3, renderer: THREE.WebGLRenderer, camera: THREE.PerspectiveCamera) { this.smoke?.update(dt, cam, renderer, camera); }
 }
 
 class Smoke {
@@ -210,7 +216,7 @@ class Smoke {
   private active: number[][] = []; private timer = 0; private P = 12; private n: number;
   private age: Float32Array;
   constructor(private list: number[][], quality: 'low' | 'high') {
-    this.n = quality === 'high' ? 24 : 10;
+    this.n = quality === 'high' ? 14 : 8;
     const N = this.n * this.P, g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(N * 3), 3));
     g.setAttribute('aSize', new THREE.Float32BufferAttribute(new Float32Array(N), 1));

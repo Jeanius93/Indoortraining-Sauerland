@@ -103,7 +103,7 @@ export function merge(parts: [THREE.BufferGeometry, string | THREE.Color][]) {
 export const box = (w: number, h: number, d: number, x = 0, y = 0, z = 0) => new THREE.BoxGeometry(w, h, d).translate(x, y, z);
 export const cyl = (r1: number, r2: number, h: number, x = 0, y = 0, z = 0, seg = 8) => new THREE.CylinderGeometry(r1, r2, h, seg).translate(x, y, z);
 
-/** Statische Instanzen, in 500-m-Kacheln geteilt und nur nahe der Kamera sichtbar */
+/** Statische Instanzen (ohne Schattenwurf), in 1-km-Kacheln geteilt und nur nahe der Kamera sichtbar */
 export class StaticSet {
   readonly group = new THREE.Group();
   private kinds = new Map<string, { geo: THREE.BufferGeometry; mat: THREE.Material; shadow: boolean; items: Map<number, { m: THREE.Matrix4[]; c: (THREE.Color | null)[] }> }>();
@@ -112,7 +112,7 @@ export class StaticSet {
   kind(name: string, geo: THREE.BufferGeometry, material: THREE.Material, shadow = false) { this.kinds.set(name, { geo, mat: material, shadow, items: new Map() }); }
   add(name: string, m: THREE.Matrix4, color: THREE.Color | null = null) {
     const k = this.kinds.get(name)!, e = new THREE.Vector3().setFromMatrixPosition(m);
-    const key = Math.floor(e.x / 500) * 100003 + Math.floor(e.z / 500);
+    const key = Math.floor(e.x / 1000) * 100003 + Math.floor(e.z / 1000);
     const it = k.items.get(key) ?? k.items.set(key, { m: [], c: [] }).get(key)!; it.m.push(m); it.c.push(color);
   }
   build() {
@@ -127,7 +127,7 @@ export class StaticSet {
     return this;
   }
   update(cam: THREE.Vector3) {
-    for (const ch of this.chunks) { const d = Math.hypot(ch.c.x - cam.x, ch.c.z - cam.z); ch.mesh.visible = d < this.far + 200; ch.mesh.castShadow = ch.shadow && d < 400; }
+    for (const ch of this.chunks) { const d = Math.hypot(ch.c.x - cam.x, ch.c.z - cam.z); ch.mesh.visible = d < this.far + 400; }
   }
 }
 

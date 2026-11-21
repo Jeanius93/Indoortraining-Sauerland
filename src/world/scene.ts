@@ -11,7 +11,7 @@ import { buildFurniture } from './furniture';
 import { buildLandmarks } from './landmarks';
 import { GrassField } from './grass';
 import { Life } from './life';
-import { SUN, shaderTime, BuildingField, Heightfield, TreeField, buildLanduseTerrain, buildChimneys, houseMaterial, buildRoad, buildSideRoads, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
+import { SUN, shaderTime, BuildingField, Heightfield, TreeField, buildLanduseTerrain, buildChimneys, houseMaterial, buildRoad, buildSideRoads, updateTerrainLod, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
 
 export const cameraModes = ['Verfolger', 'Seite', 'Ego', 'Drohne'] as const;
 export type CameraMode = typeof cameraModes[number];
@@ -37,6 +37,8 @@ export class World {
   private fpsAcc = 0; private fpsN = 0; private dpr = 1; private maxDpr = 1;
   private grass: GrassField | null = null;
   private life: Life | null = null;
+  private terrain: THREE.Object3D | null = null;
+  private furniture: THREE.Object3D | null = null;
   private lat = 0;
   /** Test-/Entwicklungsansicht: feste Kamera (lokale Koordinaten x Ost, y Nord, z Höhe) */
   debugView: { from: number[]; to: number[] } | null = null;
@@ -76,9 +78,10 @@ export class World {
     const layers: Layers = { terrain: [], roads: [], buildings: [], trees: [], grass: [], other: [] };
     const add = (k: keyof Layers, o: THREE.Object3D) => { this.scene.add(o); layers[k].push(o); };
     const ortho = usesPhoto(this.look) ? data.ortho : undefined;
-    add('terrain', data.landuse && lu ? buildLanduseTerrain(this.hf, data.landuse, lu, dist, quality, data.rawHeights, ortho) : buildTerrain(this.hf, dist, data.canopy));
+    this.terrain = data.landuse && lu ? buildLanduseTerrain(this.hf, data.landuse, lu, dist, quality, data.rawHeights, ortho) : buildTerrain(this.hf, dist, data.canopy);
+    add('terrain', this.terrain);
     add('roads', buildRoad(route, data.furniture?.towns));
-    if (data.furniture) add('other', buildFurniture(route, data.furniture, quality));
+    if (data.furniture) { this.furniture = buildFurniture(route, data.furniture, quality); add('other', this.furniture); }
     if (data.landmarks) add('other', buildLandmarks(data.landmarks, this.hf));
     if (data.landuse && lu) { this.grass = new GrassField(route, this.hf, data.landuse, lu, quality); add('grass', this.grass.group); }
     if (data.sideRoads) add('roads', buildSideRoads(data.sideRoads));
@@ -92,13 +95,13 @@ export class World {
       if (route.data.chimneys && data.buildings.ext) add('buildings', buildChimneys(route.data.chimneys));
     }
     if (data.trees) {
-      this.trees = new TreeField(this.hf, data.trees, dist, quality, quality === 'high' ? 280 : 180, fogFar);
+      this.trees = new TreeField(this.hf, data.trees, dist, quality, quality === 'high' ? 200 : 130, ENS ? Math.min(fogFar, 2700) : fogFar);
       add('trees', this.trees.group); this.treeCount = this.trees.count;
     } else {
       const trees = buildTrees(this.hf, dist, route, quality);
       this.treeCount = trees.count; add('trees', trees.group);
     }
-    if (this.look === 'ens') {
+    if (this.look === 'ens' && new URLSearchParams(location.search).get('leben') !== '0') {
       this.life = new Life({ route, hf: this.hf, quality, lu: data.landuse, luInfo: lu, houses: data.houses, sideRoads: data.sideRoads, towns: data.furniture?.towns ?? [] });
       add('other', this.life.group);
     }
@@ -160,7 +163,7 @@ export class World {
 
     // Detailstufen nachführen (alle 0,4 s)
     this.lodTimer -= dt;
-    if (this.lodTimer <= 0) { this.lodTimer = 0.4; this.trees?.update(this.camera.position); this.buildings?.update(this.camera.position); if (this.houses) updateHouses(this.houses, this.camera.position); this.grass?.update(this.camera.position); }
+    if (this.lodTimer <= 0) { this.lodTimer = 0.4; if (this.terrain) updateTerrainLod(this.terrain, this.camera.position); this.furniture?.userData.update?.(this.camera.position); this.trees?.update(this.camera.position); this.buildings?.update(this.camera.position); if (this.houses) updateHouses(this.houses, this.camera.position); this.grass?.update(this.camera.position); }
 
     // Schatten-Kamera folgt dem Avatar
     this.sun.position.copy(a.position).addScaledVector(SUN, 600);
@@ -177,7 +180,7 @@ export class World {
     this.fpsAcc += dt; this.fpsN++;
     if (this.fpsAcc < 2) return;
     const fps = this.fpsN / this.fpsAcc; this.fpsAcc = 0; this.fpsN = 0;
-    const next = fps < 28 ? Math.max(Math.min(1, this.maxDpr), this.dpr - 0.1) : fps > 50 ? Math.min(this.maxDpr, this.dpr + 0.1) : this.dpr;
+    const next = fps < 40 ? Math.max(Math.min(1, this.maxDpr), this.dpr - 0.1) : fps > 56 ? Math.min(this.maxDpr, this.dpr + 0.1) : this.dpr;
     if (Math.abs(next - this.dpr) < 0.01) return;
     this.dpr = next; this.renderer.setPixelRatio(next);
     const size = this.renderer.getSize(new THREE.Vector2()); this.renderer.setSize(size.x, size.y, false);

@@ -2,6 +2,7 @@
 // Straßenlaternen und Bordsteine. Positionen kommen als Streckenmeter + Seite (+1 links, −1 rechts).
 import * as THREE from 'three';
 import type { Route } from '../route';
+import { StaticSet } from './life/common';
 
 export interface FurnitureData {
   towns: { from: number; to: number; name: string; sub: string }[];
@@ -97,18 +98,14 @@ export function buildFurniture(route: Route, f: FurnitureData, quality: 'low' | 
   const reflL = merge([[new THREE.CylinderGeometry(0.022, 0.022, 0.01, 10).rotateX(Math.PI / 2).translate(0, 0.92, 0.056), '#ffffff'],
     [new THREE.CylinderGeometry(0.022, 0.022, 0.01, 10).rotateX(Math.PI / 2).translate(0, 0.83, 0.056), '#ffffff']]);
   const reflMat = new THREE.MeshBasicMaterial({ color: '#ffb000' }), reflMatL = new THREE.MeshBasicMaterial({ color: '#f4f4f4' });
-  const posts = new THREE.InstancedMesh(postGeo, postMat, f.posts.length);
-  const rR = new THREE.InstancedMesh(reflR, reflMat, f.posts.length), rL = new THREE.InstancedMesh(reflL, reflMatL, f.posts.length);
-  let nR = 0, nL = 0;
-  f.posts.forEach(([d, side], i) => {
+  // in Kacheln, nur nahe der Kamera sichtbar
+  const set = new StaticSet(350);
+  set.kind('post', postGeo, postMat); set.kind('rR', reflR, reflMat); set.kind('rL', reflL, reflMatL);
+  f.posts.forEach(([d, side]) => {
     const p = place(route, d, side, HW(route, d) + 0.75, -0.14);
     q.setFromAxisAngle(up, -p.heading);
-    m.compose(p.pos, q, s1); posts.setMatrixAt(i, m);
-    if (side < 0) rR.setMatrixAt(nR++, m); else rL.setMatrixAt(nL++, m);
+    m.compose(p.pos, q, s1); set.add('post', m.clone()); set.add(side < 0 ? 'rR' : 'rL', m.clone());
   });
-  rR.count = nR; rL.count = nL;
-  posts.castShadow = quality === 'high';
-  group.add(posts, rR, rL);
 
   // Schutzplanken: Profil (3 Streifen = Wellenform) auf Pfosten alle 2 m, Enden zum Boden geneigt
   const railMat = new THREE.MeshStandardMaterial({ color: '#b9bec3', roughness: 0.35, metalness: 0.75, side: THREE.DoubleSide });
@@ -140,14 +137,13 @@ export function buildFurniture(route: Route, f: FurnitureData, quality: 'low' | 
     [new THREE.BoxGeometry(0.62, 0.09, 0.26).translate(1.35, 7.08, 0), '#3b3f44'],
     [new THREE.BoxGeometry(0.5, 0.01, 0.2).translate(1.35, 7.03, 0), '#e8eef2'],
   ]);
-  const lamps = new THREE.InstancedMesh(lampGeo, new THREE.MeshLambertMaterial({ vertexColors: true }), Math.max(1, f.lights.length));
-  f.lights.forEach(([d, side], i) => {
+  set.kind('lamp', lampGeo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+  f.lights.forEach(([d, side]) => {
     const p = place(route, d, side, HW(route, d) + 2.3, -0.12);
     q.setFromAxisAngle(up, side < 0 ? Math.PI - p.heading : -p.heading);
-    m.compose(p.pos, q, s1); lamps.setMatrixAt(i, m);
+    m.compose(p.pos, q, s1); set.add('lamp', m.clone());
   });
-  lamps.count = f.lights.length; lamps.castShadow = quality === 'high';
-  group.add(lamps);
+  set.build(); group.add(set.group); group.userData.update = (cam: THREE.Vector3) => set.update(cam);
 
   // Bordsteine innerorts (beidseitig, 12 cm hoch)
   const curbMat = new THREE.MeshLambertMaterial({ color: '#c9c7c0' });

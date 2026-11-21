@@ -69,7 +69,7 @@ export class Animals {
         head: new THREE.InstancedMesh(g.head, restMat, animals.length),
       };
       animals.forEach((a, i) => herd.body.setColorAt(i, a.color));
-      for (const m of [herd.body, herd.rest, herd.head]) { m.frustumCulled = false; m.visible = false; this.group.add(m); }
+      for (const m of [herd.body, herd.rest, herd.head]) { m.visible = false; m.boundingSphere = new THREE.Sphere(V(cx, cy, this.ctx.hf.at(cx, cy)), rad + 6); this.group.add(m); }
       this.herds.push(herd); this.pose(herd);
     }
     this.birds = new Birds(ctx); this.bugs = new Butterflies(ctx, land, roads); this.pollen = new Pollen(ctx, land);
@@ -90,8 +90,8 @@ export class Animals {
   update(dt: number, cam: THREE.Vector3, rider: THREE.Vector3) {
     for (const h of this.herds) {
       const d = Math.hypot(h.cx - cam.x, -h.cy - cam.z);
-      const vis = d < 1400; for (const m of [h.body, h.rest, h.head]) { m.visible = vis; m.castShadow = d < 120; }
-      if (!vis || d > 350) continue;
+      const vis = d < 750; for (const m of [h.body, h.rest, h.head]) { m.visible = vis; m.castShadow = d < 60; }
+      if (!vis || d > 250) continue;
       const r = Math.random;
       for (const a of h.animals) {
         a.t -= dt;
@@ -213,7 +213,7 @@ class Pollen {
   readonly points: THREE.Points;
   private base: Float32Array; private fade = 0; private timer = 0;
   constructor(private ctx: LifeCtx, private land: Land) {
-    const n = ctx.quality === 'high' ? 500 : 200; this.base = new Float32Array(n * 3);
+    const n = ctx.quality === 'high' ? 280 : 120; this.base = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) { this.base[i * 3] = Math.random() * 60 - 30; this.base[i * 3 + 1] = Math.random() * 6; this.base[i * 3 + 2] = Math.random() * 60 - 30; }
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(n * 3), 3));
     const mat = new THREE.PointsMaterial({ size: 0.06, map: softDot(), transparent: true, opacity: 0, depthWrite: false, color: '#fff3c8', blending: THREE.AdditiveBlending });
