@@ -111,7 +111,7 @@ async function fetchBin(base: string, name: string): Promise<ArrayBuffer> {
   return buf;
 }
 
-export interface RouteInfo { id: string; name: string; length: number; ascent: number; maxGrade: number }
+export interface RouteInfo { id: string; name: string; length: number; ascent: number; maxGrade: number; shape?: number[]; prof?: number[] }
 /** Verfügbare Strecken (routes/index.json) */
 export async function listRoutes(): Promise<RouteInfo[]> {
   try { const r = await vfetch('routes/index.json'); if (r.ok) return await r.json(); } catch { /* egal */ }

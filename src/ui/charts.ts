@@ -83,7 +83,7 @@ export class MiniMap {
   }
 }
 
-export function drawWorkout(cv: HTMLCanvasElement, w0: Workout, ftp: number, t: number) {
+export function drawWorkout(cv: HTMLCanvasElement, w0: Workout, ftp: number, t: number, marker = true) {
   const { w, h, dpr } = fit(cv), g = cv.getContext('2d')!, total = workoutDuration(w0);
   g.clearRect(0, 0, w, h);
   const maxF = Math.max(1.2, ...w0.steps.map(s => Math.max(s.from, s.to ?? 0)));
@@ -97,6 +97,29 @@ export function drawWorkout(cv: HTMLCanvasElement, w0: Workout, ftp: number, t: 
     acc += s.dur;
   }
   g.globalAlpha = 1;
+  if (!marker) return;
   const x = t / total * w;
   g.fillStyle = '#fff'; g.fillRect(x - dpr, 0, 2 * dpr, h);
+}
+
+/** Streckenvorschau aus routes/index.json: Umriss (oben) oder Höhenprofil */
+export function drawShape(cv: HTMLCanvasElement, shape: number[], color = '#ffb547', box = { l: 0, t: 0, r: 1, b: 1 }) {
+  const { w, h, dpr } = fit(cv), g = cv.getContext('2d')!; g.clearRect(0, 0, w, h);
+  let mx = 0, my = 0; for (let i = 0; i < shape.length; i += 2) { mx = Math.max(mx, shape[i]); my = Math.max(my, shape[i + 1]); }
+  const bw = w * (box.r - box.l), bh = h * (box.b - box.t), pad = 10 * dpr;
+  const s = Math.min((bw - 2 * pad) / (mx || 1), (bh - 2 * pad) / (my || 1)), ox = w * box.l + (bw - mx * s) / 2, oy = h * box.t + (bh - my * s) / 2;
+  g.lineJoin = 'round'; g.lineCap = 'round';
+  for (const [lw, c] of [[6, 'rgba(0,0,0,.35)'], [3, color]] as const) {
+    g.strokeStyle = c; g.lineWidth = lw * dpr; g.beginPath();
+    for (let i = 0; i < shape.length; i += 2) { const x = ox + shape[i] * s, y = oy + shape[i + 1] * s; if (i) g.lineTo(x, y); else g.moveTo(x, y); }
+    g.stroke();
+  }
+  g.fillStyle = '#fff'; g.beginPath(); g.arc(ox + shape[0] * s, oy + shape[1] * s, 4.5 * dpr, 0, Math.PI * 2); g.fill();
+}
+export function drawMiniProfile(cv: HTMLCanvasElement, prof: number[]) {
+  const { w, h } = fit(cv), g = cv.getContext('2d')!; g.clearRect(0, 0, w, h);
+  const lo = Math.min(...prof) - 10, hi = Math.max(...prof) + 5, X = (i: number) => i / (prof.length - 1) * w, Y = (e: number) => h - (e - lo) / (hi - lo) * h * 0.9;
+  g.beginPath(); g.moveTo(0, h); prof.forEach((e, i) => g.lineTo(X(i), Y(e))); g.lineTo(w, h); g.closePath();
+  g.fillStyle = 'rgba(92,192,106,.35)'; g.fill();
+  g.beginPath(); prof.forEach((e, i) => i ? g.lineTo(X(i), Y(e)) : g.moveTo(X(i), Y(e))); g.strokeStyle = '#8fd49a'; g.lineWidth = Math.max(1, w / 300); g.stroke();
 }

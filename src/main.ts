@@ -6,10 +6,11 @@ import { stepSpeed, defaultRider, type RiderSettings } from './physics';
 import { FtmsTrainer, HeartRateMonitor, bluetoothAvailable } from './devices/ftms';
 import { SimulatedTrainer } from './devices/simulator';
 import type { Trainer } from './devices/types';
-import { workouts, workoutTarget, zone, type Workout } from './workouts';
+import { findWorkout, workoutTarget, workoutDuration, workoutTss, catTag, zone, type Workout } from './workouts';
 import { Recorder } from './recorder';
 import { buildFit } from './fit';
-import { ProfileChart, MiniMap, drawWorkout, gradeColor, zoneColor } from './ui/charts';
+import { ProfileChart, MiniMap, drawWorkout, drawShape, drawMiniProfile, gradeColor, zoneColor } from './ui/charts';
+import { WorkoutPage, fmtHM } from './ui/workoutPage';
 import { GamepadInput, type PadAction } from './ui/gamepad';
 import { PlacePicker, placeList, placeLabel } from './ui/places';
 import { saveRide, deleteRide, listRides, type StoredRide } from './storage';
@@ -41,7 +42,7 @@ let ergTarget = 200, ergBias = 0;
 let recorder = new Recorder();
 let wakeLock: { release(): Promise<void> } | null = null;
 const rider = (): RiderSettings => ({ ...defaultRider, riderKg: settings.kg });
-const workout = (): Workout => workouts.find(w => w.id === settings.workout) ?? workouts[0];
+const workout = (): Workout => findWorkout(settings.workout);
 // Grafikstufe: Einstellung > Adresse (?q=high) > automatisch (Handy = niedrig; Windows-Handhelds wie die Claw = hoch)
 const autoQuality = (): 'low' | 'high' => /Android|iPhone|iPad/i.test(navigator.userAgent) || (matchMedia('(pointer: coarse)').matches && !/Windows/i.test(navigator.userAgent) && Math.min(screen.width, screen.height) < 900) ? 'low' : 'high';
 const qParam = new URLSearchParams(location.search).get('q');
@@ -71,7 +72,6 @@ async function init() {
   await ensureLatest();
   routes = await listRoutes();
   if (!routes.some(r => r.id === settings.route)) settings.route = routes[0]?.id ?? 'hausrunde';
-  renderRoutePicker();
   const loaded = await loadRoute(`routes/${settings.route}`, msg => { $('loading').firstElementChild!.textContent = msg; }, { fine: settings.quality === 'high' && import.meta.env.MODE !== 'artifact', photo: !ENS });
   route = loaded.route;
   $('loading').firstElementChild!.textContent = 'Sauerland wird aufgebaut …';
@@ -82,9 +82,12 @@ async function init() {
   profile = new ProfileChart($<HTMLCanvasElement>('profile'), route, { bg: 'rgba(13,22,19,.78)', labels: true });
   minimap = new MiniMap($<HTMLCanvasElement>('minimap'), route);
   new ProfileChart($<HTMLCanvasElement>('routeThumb'), route, { padTop: 18 }).draw(null);
+  const info = routes.find(r => r.id === settings.route);
+  if (info?.shape) drawShape($<HTMLCanvasElement>('routeShape'), info.shape, '#ffb547', { l: 0.4, t: 0.03, r: 0.99, b: 0.7 });
+  void renderRouteGrid();
   $('routeName').textContent = route.data.name;
-  $('routeLen').textContent = `${fmt(route.length / 1000, 1)} km`;
-  $('routeUp').textContent = `${fmt(route.data.ascent)} Hm`;
+  $('routeLen').textContent = fmt(route.length / 1000, 1);
+  $('routeUp').textContent = fmt(route.data.ascent);
   $('routeMax').textContent = `${fmt(route.data.maxGrade, 1)} %`;
   $('attrib').textContent = route.data.attribution;
   $('routeAttrib').textContent = route.data.world
@@ -106,6 +109,11 @@ addEventListener('resize', onResize);
 function setDev(btn: string, state: string, cls: '' | 'ok' | 'err') {
   const b = $(btn); b.classList.remove('ok', 'err'); if (cls) b.classList.add(cls);
   b.querySelector('.dev-state')!.textContent = state;
+  const pill = btn === 'btnHr' ? $('pillHr') : btn === 'btnTrainer' || (btn === 'btnSim' && cls === 'ok') ? $('pillTrainer') : null;
+  if (pill) {
+    pill.className = `pill ${cls}`;
+    pill.textContent = btn === 'btnHr' ? (cls === 'ok' ? 'Puls' : cls === 'err' ? 'Puls getrennt' : 'Puls –') : btn === 'btnSim' ? 'Simulator' : cls === 'ok' ? (trainer?.name ?? 'Trainer') : cls === 'err' ? 'Trainer getrennt' : 'Trainer –';
+  }
 }
 function attachTrainer(t: Trainer) {
   trainer?.disconnect();
@@ -168,17 +176,43 @@ $('btnSim').onclick = () => {
 };
 
 // ---------- Modus / Workout ----------
-const woSelect = $<HTMLSelectElement>('woSelect');
-for (const w of workouts) woSelect.add(new Option(`${w.name} – ${w.info}`, w.id));
-woSelect.value = settings.workout;
-woSelect.onchange = () => { settings.workout = woSelect.value; saveSettings(); };
 document.querySelectorAll<HTMLButtonElement>('.seg-btn').forEach(b => b.onclick = () => setMode(b.dataset.mode as Settings['mode']));
 function setMode(m: Settings['mode']) {
   settings.mode = m; saveSettings();
   document.querySelectorAll<HTMLButtonElement>('.seg-btn').forEach(b => { const on = b.dataset.mode === m; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); });
-  $('woField').hidden = m !== 'erg';
+  $('trainSim').hidden = m === 'erg'; $('trainErg').hidden = m !== 'erg';
+  renderTraining();
   applyMode();
 }
+/** Trainings-Karte auf der Seite „Fahren“ */
+function renderTraining() {
+  const w = workout(), tag = $('woTag');
+  tag.className = `tag ${w.cat}`; tag.textContent = catTag(w.cat);
+  $('woName').textContent = w.name;
+  $('woWatt').textContent = w.steps.length ? w.info.replace(/^\d+:\d+ · /, '') : 'Zielwert während der Fahrt mit ± einstellen';
+  $('woDur').textContent = w.steps.length ? fmtHM(workoutDuration(w)) : '–';
+  $('woTss').textContent = w.steps.length ? String(workoutTss(w)) : '–';
+  const cv = $<HTMLCanvasElement>('woPreview'); cv.hidden = !w.steps.length;
+  if (w.steps.length && !$('trainErg').hidden) requestAnimationFrame(() => drawWorkout(cv, w, settings.ftp, 0, false));
+  $('pillFtp').textContent = `FTP ${settings.ftp} W · ${settings.kg} kg`;
+}
+const woPage = new WorkoutPage(() => settings.ftp, () => settings.workout,
+  id => { settings.workout = id; saveSettings(); setMode('erg'); },
+  () => showPage('ride'), m => toast(m));
+
+// ---------- Reiter ----------
+function showPage(p: string) {
+  document.querySelectorAll<HTMLElement>('.tab').forEach(t => t.classList.toggle('on', t.dataset.page === p));
+  document.querySelectorAll<HTMLElement>('.page').forEach(el => { el.hidden = el.dataset.page !== p; });
+  $('start').scrollTop = 0;
+  if (p === 'workouts') woPage.render();
+  if (p === 'routes') void renderRouteGrid();
+  if (p === 'history') void renderHistory();
+  if (p === 'ride') renderTraining();
+}
+document.querySelectorAll<HTMLElement>('.tab').forEach(t => t.onclick = () => showPage(t.dataset.page!));
+document.addEventListener('click', e => { const g = (e.target as HTMLElement).closest<HTMLElement>('[data-goto]'); if (g) showPage(g.dataset.goto!); });
+
 function applyMode() {
   const erg = settings.mode === 'erg';
   $('btnMode').textContent = erg ? 'ERG' : 'Frei';
@@ -256,7 +290,7 @@ const pad = new GamepadInput((a: PadAction) => {
 // ---------- Eingaben Startbildschirm ----------
 const bindNum = (id: string, key: 'ftp' | 'kg' | 'difficulty') => {
   const el = $<HTMLInputElement>(id); el.value = String(settings[key]);
-  el.onchange = () => { const v = Number(el.value); if (Number.isFinite(v) && v > 0 || key === 'difficulty') { settings[key] = v; saveSettings(); } };
+  el.onchange = () => { const v = Number(el.value); if (Number.isFinite(v) && v > 0 || key === 'difficulty') { settings[key] = v; saveSettings(); renderTraining(); } };
 };
 bindNum('inFtp', 'ftp'); bindNum('inKg', 'kg'); bindNum('inDiff', 'difficulty');
 const qSel = $<HTMLSelectElement>('inQuality'); qSel.value = settings.quality;
@@ -315,9 +349,7 @@ function saveFit(auto = false) {
     const bytes = buildFit(recorder);
     const date = new Date(recorder.samples[0].t);
     const name = `Sauerland_${route.data.name}_${date.toISOString().slice(0, 16).replace(/[:T]/g, '-')}.fit`;
-    const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/octet-stream' }));
-    const a = document.createElement('a'); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    downloadFit(bytes, name);
     $('uploadStatus').textContent = `${auto ? 'Automatisch gespeichert' : 'Gespeichert'}: ${name} (Ordner „Downloads“)`;
     $('uploadBox').className = 'upload ok';
   } catch (e) { $('uploadStatus').textContent = `Speichern fehlgeschlagen: ${(e as Error).message}`; $('uploadBox').className = 'upload err'; }
@@ -327,11 +359,64 @@ $('btnAgain').onclick = () => {
   rideId = ''; $('done').hidden = true; $('start').hidden = false; dist = startDist(); world.snapCamera(); };
 
 // ---------- Streckenauswahl ----------
-function renderRoutePicker() {
-  const sel = $<HTMLSelectElement>('routeSelect');
-  sel.innerHTML = routes.map(r => `<option value="${r.id}">${r.name}${r.length ? ` · ${fmt(r.length / 1000, 1)} km · ${fmt(r.ascent)} Hm` : ''}</option>`).join('');
-  sel.value = settings.route;
-  sel.onchange = () => { if (running) return; settings.route = sel.value; chosenStart = null; saveSettings(); $('loading').hidden = false; $('loading').firstElementChild!.textContent = 'Strecke wird gewechselt …'; location.reload(); };
+let routeFilter = 'all';
+$('routeFilter').onclick = e => { const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button'); if (!b) return; routeFilter = b.dataset.f!; $('routeFilter').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); void renderRouteGrid(); };
+$<HTMLSelectElement>('routeSort').onchange = () => void renderRouteGrid();
+const esc = (t: string) => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+const ago = (iso: string) => { const d = Math.floor((Date.now() - new Date(iso).getTime()) / 864e5); return d <= 0 ? 'heute' : d === 1 ? 'gestern' : d < 14 ? `vor ${d} Tagen` : d < 60 ? `vor ${Math.round(d / 7)} Wochen` : new Date(iso).toLocaleDateString('de-DE'); };
+async function renderRouteGrid() {
+  const rides = await listRides(), lastBy = new Map<string, string>();
+  for (const r of rides) if (r.samples.length >= 30 && !lastBy.has(r.route)) lastBy.set(r.route, r.id);
+  const sort = $<HTMLSelectElement>('routeSort').value;
+  const list = routes.filter(r => routeFilter === 'all' || (routeFilter === 's' ? r.length < 25000 : routeFilter === 'm' ? r.length >= 25000 && r.length <= 40000 : r.length > 40000))
+    .sort((a, b) => sort === 'up' ? a.ascent - b.ascent : sort === 'name' ? a.name.localeCompare(b.name, 'de') : a.length - b.length);
+  $('routeGrid').innerHTML = list.map(r => `<button class="card rcard${r.id === settings.route ? ' on' : ''}" data-id="${r.id}">
+    <div class="rshape"><canvas></canvas>${r.id === settings.route ? '<span class="badge">gewählt</span>' : ''}</div><canvas class="rprof"></canvas>
+    <div class="rb"><div class="rname">${esc(r.name)}</div>
+    <dl class="stats"><div><dd>${fmt(r.length / 1000, 1)}</dd><dt>km</dt></div><div><dd>${fmt(r.ascent)}</dd><dt>Hm</dt></div><div><dd>${fmt(r.maxGrade, 1)} %</dd><dt>max</dt></div></dl>
+    <div class="last">zuletzt gefahren: ${lastBy.has(r.id) ? ago(lastBy.get(r.id)!) : '–'}</div></div></button>`).join('') || '<p class="muted">Keine Strecke in dieser Auswahl.</p>';
+  $('routeGrid').querySelectorAll<HTMLElement>('[data-id]').forEach(el => {
+    const r = routes.find(x => x.id === el.dataset.id)!;
+    if (r.shape) drawShape(el.querySelector('.rshape canvas')!, r.shape);
+    if (r.prof) drawMiniProfile(el.querySelector('.rprof')!, r.prof);
+    el.onclick = () => {
+      if (running) return;
+      if (r.id === settings.route) { showPage('ride'); return; }
+      settings.route = r.id; chosenStart = null; saveSettings();
+      $('loading').hidden = false; $('loading').firstElementChild!.textContent = 'Strecke wird gewechselt …';
+      const u = new URL(location.href); u.searchParams.delete('km'); location.replace(u.toString());
+    };
+  });
+}
+
+// ---------- Fahrten ----------
+async function renderHistory() {
+  const rides = (await listRides()).filter(r => r.samples.length >= 10);
+  $('historyList').innerHTML = rides.map(r => {
+    const rec = new Recorder(); rec.samples = r.samples; const s = rec.summary();
+    const name = routes.find(x => x.id === r.route)?.name ?? r.route;
+    return `<div class="hrow" data-id="${esc(r.id)}"><div><div class="hd">${new Date(r.id).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })}</div><div class="hr">${esc(name)}${r.simulated ? ' · Simulator' : ''}${r.finished ? '' : ' · unterbrochen'}</div></div>
+      <dl class="stats"><div><dd>${s ? fmt(s.distance / 1000, 1) : '0'}</dd><dt>km</dt></div><div><dd>${s ? fmtTime(s.duration) : '–'}</dd><dt>Zeit</dt></div><div><dd>${s ? fmt(s.avgPower) : '–'}</dd><dt>Ø W</dt></div><div><dd>${s?.avgHr ? fmt(s.avgHr) : '–'}</dd><dt>Ø Puls</dt></div></dl>
+      <div class="ha"><button class="btn" data-act="fit">FIT speichern</button><button class="btn danger" data-act="del">Löschen</button></div></div>`;
+  }).join('') || '<p class="muted">Noch keine Fahrten gespeichert.</p>';
+}
+$('historyList').onclick = async e => {
+  const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-act]'); if (!b) return;
+  const id = b.closest<HTMLElement>('.hrow')!.dataset.id!, ride = (await listRides()).find(r => r.id === id); if (!ride) return;
+  if (b.dataset.act === 'fit') {
+    const rec = new Recorder(); rec.samples = ride.samples;
+    const name = `Sauerland_${routes.find(x => x.id === ride.route)?.name ?? ride.route}_${new Date(ride.samples[0].t).toISOString().slice(0, 16).replace(/[:T]/g, '-')}.fit`;
+    downloadFit(buildFit(rec), name); toast(`Gespeichert: ${name}`);
+  } else {
+    if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Wirklich?'; setTimeout(() => { delete b.dataset.armed; b.textContent = 'Löschen'; }, 3000); return; }
+    if (id === rideId && running) return;
+    await deleteRide(id); void renderHistory();
+  }
+};
+function downloadFit(bytes: Uint8Array, name: string) {
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/octet-stream' }));
+  const a = document.createElement('a'); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
 // ---------- Sicherung der Fahrt ----------

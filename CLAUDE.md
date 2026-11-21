@@ -26,7 +26,10 @@ Firefox hat kein Web Bluetooth) und testet auch am Handy. Oberfläche und Code-K
 - `src/route.ts` – Streckendaten laden (`loadRoute`, `listRoutes`), `Route` mit `pose(d)`, `wrap(d)` für Rundkurse.
 - `src/physics.ts`, `src/workouts.ts`, `src/recorder.ts`, `src/fit.ts`, `src/storage.ts` (IndexedDB, alle 5 s gesichert).
 - `src/devices/ftms.ts` (FTMS + Puls, Auto-Reconnect), `simulator.ts` (Simulationsmodus ohne Trainer).
-- `src/ui/` – Höhenprofil/Karte (`charts.ts`), Gamepad, Orte-Sprung.
+- `src/ui/` – Höhenprofil/Karte/Streckenvorschau (`charts.ts`), Gamepad, Orte-Sprung, `workoutPage.ts` (Workout-Bibliothek + Editor).
+- Startbildschirm mit Reitern Fahren / Strecken / Workouts / Fahrten / Profil (`app/index.html`, Logik in `main.ts`).
+  Workouts (`src/workouts.ts`): Bausteine step/ramp/set in Anteilen der FTP, Kategorien LIT/FAT/HIT/SCH/TEST, eigene in
+  localStorage `sauerland.workouts`. `index.json` enthält Vorschau (`shape`, `prof`) aus `scripts/make-index.mjs`.
 - `src/world/scene.ts` – Renderer, Licht, Kameras, LOD-Takt (0,4 s), adaptive Auflösung, rechts fahren (`riderOffset`).
 - `src/world/style.ts` – Look „ens“ (Standard): Dunst, Bloom, Farbkorrektur, MSAA-Zwischenbild. `lookflag.ts` schaltet.
 - `src/world/terrain.ts` – Gelände (Kacheln mit 3 Detailstufen + Schürze), Straße/Nebenstraßen (Ribbons, je km zusammengefasst),
