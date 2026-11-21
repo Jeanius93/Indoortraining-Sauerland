@@ -29,7 +29,7 @@ function bladeTexture() {
 export class GrassField {
   readonly group = new THREE.Group();
   private chunks: { c: THREE.Vector3; mesh: THREE.InstancedMesh }[] = [];
-  constructor(route: Route, hf: Heightfield, lu: Uint8Array, info: { px: number; w: number; h: number }, quality: 'low' | 'high') {
+  constructor(route: Route, hf: Heightfield, lu: Uint8Array, info: { px: number; w: number; h: number }, quality: 'low' | 'high', roadDist?: (x: number, y: number) => number) {
     const { x, y, step } = route.data, n = x.length, r = rng(21), { x0, y0 } = hf.t;
     // Büschel: drei gekreuzte Flächen, 0,6 m breit, 0,5 m hoch
     const geo = new THREE.BufferGeometry(), pos: number[] = [], uv: number[] = [], idx: number[] = [];
@@ -55,6 +55,7 @@ export class GrassField {
           const px = x[k] + dx / l * along + nx * off * side, py = y[k] + dy / l * along + ny * off * side;
           const li = Math.floor((px - x0) / info.px), lj = Math.floor((py - y0) / info.px);
           if (li < 0 || lj < 0 || li >= info.w || lj >= info.h || !MEADOW.has(lu[lj * info.w + li])) continue;
+          if (roadDist && roadDist(px, py) < 0.6) continue;                 // nicht auf Wegen (Feldwege liegen oft in Wiesenflurstücken)
           p.set(px, hf.at(px, py) - 0.03, -py); q.setFromAxisAngle(up, r() * Math.PI);
           const sc = (ENS ? 0.9 : 1.0) + r() * 1.1; s.set(sc * 1.3, sc * (ENS ? 1.0 + r() * 0.7 : 0.8 + r() * 0.5), sc * 1.3);
           mats.push(m.compose(p, q, s).clone()); cols.push(ENS ? col.setHSL(0.22 + r() * 0.06, 0.35, 0.62 + r() * 0.2).clone() : col.setHSL(0.2 + r() * 0.07, 0.4, 0.62 + r() * 0.2).clone());

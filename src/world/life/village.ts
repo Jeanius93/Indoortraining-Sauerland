@@ -74,8 +74,8 @@ export class Village {
 
     // ---------- Gärten ----------
     if (houses) houses.list.forEach((h, hi) => {
-      const [cx, cy, ang, L, W, , eave] = h;
-      if (L * W > 380 || L * W < 40 || eave > 9 || routeNear(cx, cy) > 60) return;
+      const [cx, cy, ang, L, W, , eave, , roofKind] = h;
+      if (L * W > 380 || L * W < 60 || eave > 9 || roofKind === 0 || roofKind === 1 || routeNear(cx, cy) > 60) return;   // nur Wohnhäuser, keine Garagen/Anbauten
       const lc = land.at(cx, cy); if (lc !== 6 && lc !== 13 && lc !== 1) return;
       const c = Math.cos(ang), s = Math.sin(ang), mg = 3 + r() * 3.5, ha = L / 2 + mg, hb = W / 2 + mg;
       const wp = (a: number, b: number) => [cx + c * a - s * b, cy + s * a + c * b] as const;

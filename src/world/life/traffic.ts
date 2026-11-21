@@ -2,6 +2,7 @@
 // Die Fahrerin/der Fahrer fährt rechts; auf Radwegen gibt es keinen Autoverkehr.
 import * as THREE from 'three';
 import { rng } from '../noise';
+import { inRoundabout } from '../roads';
 import { type LifeCtx, Land, Roads, Houses, StaticSet, merge, box, cyl, mat, beside, halfWidth, isRadweg, inTown, V } from './common';
 
 const COLORS = ['#e8e8e6', '#1d1f22', '#8b9096', '#c4c7cb', '#24324f', '#6e1b1b', '#2f4a39', '#f2f2f0', '#3a3d42', '#9a2c22', '#d8d2c4', '#174a7c'];
@@ -104,6 +105,7 @@ export class Traffic {
       const off = this.rel(c.d, riderD);
       if ((c.dir > 0 && off > 1300) || (c.dir < 0 && off < -250) || (!route.loop && (c.d < 0 || c.d > L))) { c.on = false; c.wait = 2 + Math.random() * 25; hide(i); return; }
       if (isRadweg(route, dd)) { hide(i); return; }
+      if (c.dir < 0 && inRoundabout(route, dd, 12)) { hide(i); return; }   // Gegenverkehr würde im Kreisel falsch herum fahren
       const lx = -Math.cos(p.heading), ly = Math.sin(p.heading);
       const x = p.x + lx * c.lat, y = p.y + ly * c.lat;
       const fx = Math.sin(p.heading) * c.dir, fy = Math.cos(p.heading) * c.dir;

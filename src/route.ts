@@ -27,6 +27,7 @@ export interface RouteData {
   places?: { d: number; road: string | null; area: string | null }[];
   surface?: { from: number; to: number; type: 'radweg' }[];
   width?: number[];   // echte Fahrbahnbreite je Streckenpunkt (m)
+  roundabouts?: { from: number; to: number; ring: number }[];   // Strecke auf der Kreisfahrbahn (Streckenmeter)
   overlap?: number[][];   // doppelt befahrene Abschnitte (Streckenmeter der späteren Durchfahrt): nur einmal zeichnen
 }
 
@@ -38,7 +39,8 @@ export interface WorldData {
   landuse?: Uint8Array;
   houses?: import('./world/houses').HouseData;
   rawHeights?: Int16Array; // Gelände ohne eingeschnittene Straße (für glatte Beleuchtung)
-  sideRoads?: { w: number[]; p: number[][] }[]; // abzweigende Straßen [x, y, h]
+  sideRoads?: import('./world/roads').SideRoad[]; // Straßennetz [x, y, h] mit Art, Einmündungen
+  rings?: import('./world/roads').Ring[];          // Kreisverkehre
   furniture?: import('./world/furniture').FurnitureData;
   landmarks?: import('./world/landmarks').LandmarkData;  // Talsperre, Aqua Magis, Türme, Hochspannung // Ortstafeln, Leitpfosten, Schutzplanken, Laternen
   ortho?: Map<string, ImageData>;                // Luftbild je Geländekachel ("ci_cj"), Zeile 0 = Süden
@@ -150,7 +152,7 @@ export async function loadRoute(base: string, onProgress?: (msg: string) => void
   } catch { /* optional */ }
   try {
     const r = await vfetch(`${base}/roads.json`);
-    if (r.ok) world.sideRoads = (await r.json() as { roads: WorldData['sideRoads'] }).roads;
+    if (r.ok) { const j = await r.json() as { roads: WorldData['sideRoads']; rings?: WorldData['rings'] }; world.sideRoads = j.roads; world.rings = j.rings; }
   } catch { /* optional */ }
   if (opts.photo) try {
     const r = await vfetch(`${base}/ortho.json`);

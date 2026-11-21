@@ -32,8 +32,12 @@ Firefox hat kein Web Bluetooth) und testet auch am Handy. Oberfläche und Code-K
   localStorage `sauerland.workouts`. `index.json` enthält Vorschau (`shape`, `prof`) aus `scripts/make-index.mjs`.
 - `src/world/scene.ts` – Renderer, Licht, Kameras, LOD-Takt (0,4 s), adaptive Auflösung, rechts fahren (`riderOffset`).
 - `src/world/style.ts` – Look „ens“ (Standard): Dunst, Bloom, Farbkorrektur, MSAA-Zwischenbild. `lookflag.ts` schaltet.
-- `src/world/terrain.ts` – Gelände (Kacheln mit 3 Detailstufen + Schürze), Straße/Nebenstraßen (Ribbons, je km zusammengefasst),
-  Bäume (`TreeField`, 500-m-Kacheln, 3 LOD), Hausmaterial-Shader.
+- `src/world/terrain.ts` – Gelände (Kacheln mit 3 Detailstufen + Schürze), Strecke als Band (Randlinie/Bankett an Einmündungen
+  ausgespart, im Kreisverkehr nicht gezeichnet), Bäume (`TreeField`, 500-m-Kacheln, 3 LOD), Hausmaterial-Shader.
+- `src/world/roads.ts` – Straßennetz: ein Material für alle Nebenstraßen (Markierungen im Shader je Art: B/L/K Rand- und
+  Leitlinie, G ohne, H Asphalt ausgefranst, F Schotter mit Grasnarbe, P Radweg, R Kreisfahrbahn mit Pflaster-Innenring),
+  Eckausrundungen an Einmündungen, Knotenflächen, Kreisverkehr-Insel (Bordstein, Sträucher, Baum). `findJunctions`,
+  `inMouth`, `inRoundabout` nutzen Ausstattung, Verkehr und Gras.
 - `src/world/houses.ts` – Häuser aus `houses.json` (Rechteck, Dachformen, Schornsteine). `grass.ts`, `sky.ts`, `furniture.ts`
   (Ortstafeln, Leitpfosten, Laternen, Planken, Bordsteine), `landmarks.ts` (Talsperre, Aqua Magis, Türme, Hochspannung).
 - `src/world/avatar.ts` – Fahrer + Rennrad, Bein/Arm-IK, Wiegetritt, Trikot-Textur (Canvas), Helm.
@@ -49,7 +53,19 @@ Firefox hat kein Web Bluetooth) und testet auch am Handy. Oberfläche und Code-K
 - **Datenschutz (Repo ist öffentlich):** Strecken starten nie an der Haustür (`scripts/make-loop.py`: gemeinsamen Hin/Rückweg
   abschneiden, Start ≥ 1,5 km Luftlinie vom Zuhause), Zeit/Puls/Temperatur aus GPX entfernt. Keine Adresse/Namen ins Repo.
 - **Alle Strecken sind Rundkurse** (Start = Ziel, `close-loop.py`), Runden = Überfahrten der Ziellinie.
-- **Neue Strecke:** `scripts/build-route.sh <aufzeichnung.gpx> <id> "<Name>"` (ganze Pipeline, ~3–8 min);
+- **Welt neu aufbauen (Straßennetz, Gelände, Bäume, Häuser):** `scripts/rebuild-world.sh <id> scripts/.cache/routes-orig/<id>`
+  (immer vom unbearbeiteten Stand ausgehen, `prepare-network.py` legt die Strecke in Kreisverkehre). Voraussetzung:
+  Basis-DLM entpackt in `scripts/.cache/dlm/` + `python3 scripts/extract-dlm.py` → `axes.json`; Kacheln (DGM1, nDOM, LoD2, DOP)
+  im Cache (Indexlisten `*_index.json` als JSON `[{"name":…}]`). Python braucht zusätzlich networkx, shapely, scikit-image.
+- **Straßennetz** (`prepare-network.py`): Achsen aus dem ATKIS Basis-DLM (Straße, Fahrweg, Weg; Autobahn weg), Breite aus DLM oder
+  ALKIS-Fläche je Klasse begrenzt; Abschnitte auf der Strecke herausgeschnitten, Abzweige enden auf der Streckenmitte (`s`=1),
+  Zufahrten am Kreisel auf dem Ring (`s`=2). Kreuzung ohne Knoten nur dann nicht angebunden, wenn das DLM eine Brücke kennt
+  (`hatDirektUnten`). Kreisverkehre = runde Ringe mit ≥ 3 Zufahrten; im Luftbild geprüft, Fehlerkennungen in
+  `scripts/roundabout-exclude.json`. Feld-/Wald-/Radwege liegen auf dem Gelände auf (kein Einschnitt).
+- **Häuser** (`prepare-houses.py`): je LoD2-Gebäudeteil; Firstrichtung aus der Fallrichtung der Dachflächen, Traufe = gewichteter
+  Median der Unterkanten, L-/T-Grundrisse in Rechtecke zerlegt (Flügel greifen ins Hauptdach), Neigung 15–55° (Pult 5–35°),
+  Teile < 12 m² weg. Danach Nebenstraßen an Häusern schmaler, Bäume in/an Häusern und auf Fahrbahnen entfernt.
+- **Neue Strecke:** `scripts/build-route.sh <aufzeichnung.gpx> <id> "<Name>"` (ganze Pipeline, ~3–8 min; danach rebuild-world.sh);
   `-` statt GPX verarbeitet vorhandenes `routes/<id>.gpx` neu. Danach `scripts/rename-route.py <id> "<Name>"`,
   Namen aus Ortschaften entlang der Strecke: `scripts/route-villages.py public/routes/<id> scripts/.cache/alkis/*.gpkg`.
 - **Straßenhöhe** (`prepare-world.mjs`): DGM1 in der Straßenmitte; Höhenmesser nur zur Brückenerkennung (driftet bis 15 m),
@@ -81,7 +97,6 @@ Firefox hat kein Web Bluetooth) und testet auch am Handy. Oberfläche und Code-K
 ## 7. Bekannte Bugs / offene Baustellen
 - Performance auf der Claw nach der letzten Optimierung **nicht bestätigt**; schwarze Blitzer am Handy vermutlich behoben (unbestätigt).
 - Noch 40–130 Stellen je Strecke mit > 3 m Abstand Straße↔Rohgelände (Brücken, Einschnitte – meist korrekt, nicht einzeln geprüft).
-- In Ortschaften stehen nah an Straßen gelegentlich Objekte unpassend (Bushaltestelle vor Hauswand, parkende Autos am Gehweg).
 - Autos sind starr (keine Räderdrehung, kein Licht); Fahrer hat auf schmalen Straßen wenig Abstand beim Überholen.
 - Wanderwegweiser/Hochsitze/Holzstapel nur grob über Nutzungskarte platziert.
 - Electron-/Installer-Version nur besprochen, nicht gebaut.

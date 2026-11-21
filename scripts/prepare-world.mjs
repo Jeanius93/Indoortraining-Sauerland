@@ -101,15 +101,17 @@ const routeUtm = route.x.map((x, k) => localToUtm(x, route.y[k]));
 
 // Abzweigende Straßen (von prepare-roads.py), auf ≤ 5 m verdichtet
 const roadsFile = path.join(dir, 'roads.json');
-const sideRoads = fs.existsSync(roadsFile) ? JSON.parse(fs.readFileSync(roadsFile, 'utf8')).roads.map(r => {
+const roadsJson = fs.existsSync(roadsFile) ? JSON.parse(fs.readFileSync(roadsFile, 'utf8')) : { roads: [] };
+const sideRoads = roadsJson.roads.map(r => {
   const pts = [], w = [];
   for (let i = 0; i < r.p.length - 1; i++) {
     const [ax, ay] = r.p[i], [bx, by] = r.p[i + 1], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 5));
     for (let s = 0; s < n; s++) { const t = s / n; pts.push([ax + (bx - ax) * t, ay + (by - ay) * t]); w.push(r.w[i] + (r.w[i + 1] - r.w[i]) * t); }
   }
   pts.push(r.p.at(-1).slice(0, 2)); w.push(r.w.at(-1));
-  return { pts, w, utm: pts.map(([x, y]) => localToUtm(x, y)), dgm: pts.map(() => NaN) };
-}) : [];
+  const { p: _p, w: _w, ...meta } = r;                    // Art, Einmündungen, Name (von prepare-network.py) mitführen
+  return { pts, w, meta, utm: pts.map(([x, y]) => localToUtm(x, y)), dgm: pts.map(() => NaN) };
+});
 const grid = new Float32Array(nx * ny).map((_, k) => oldGrid[k] * T.scale);
 const gridFromDgm = new Uint8Array(nx * ny);
 const canopy = new Uint8Array(nx * ny);
@@ -407,12 +409,25 @@ const nearestRoute = (x, y) => {
 for (const r of sideRoads) {
   const med = r.dgm.map((_, i) => { const w = []; for (let j = Math.max(0, i - 3); j <= Math.min(r.dgm.length - 1, i + 3); j++) if (!isNaN(r.dgm[j])) w.push(r.dgm[j]); w.sort((p, q) => p - q); return w.length ? w[w.length >> 1] : NaN; });
   let h = smooth(med, 2);
+  // An die Streckenhöhe angleichen nur an echten Einmündungen (Ende auf der Strecke) und bei Kreisverkehren –
+  // nicht bei Straßen, die die Strecke auf einer Brücke kreuzen oder unter ihr hindurchführen
+  const along = [0]; for (let i = 1; i < r.pts.length; i++) along.push(along[i - 1] + Math.hypot(r.pts[i][0] - r.pts[i - 1][0], r.pts[i][1] - r.pts[i - 1][1]));
+  const total = along.at(-1), s0 = r.meta.s?.[0] ?? 1, s1 = r.meta.s?.[1] ?? 1, ring = r.meta.k === 'R';
   h = h.map((v, i) => {
+    if (!ring && !(s0 === 1 && along[i] < 40) && !(s1 === 1 && total - along[i] < 40)) return v;
     const [bk, d] = nearestRoute(...r.pts[i]);
     if (bk < 0 || d > 30) return v;
     const t = Math.min(1, Math.max(0, (d - 4) / 26)), s = t * t * (3 - 2 * t);
     return isNaN(v) ? route.h[bk] : route.h[bk] + (v - route.h[bk]) * s;
   });
+  // Brücke über die Strecke: Höhen zwischen den Brückenenden geradlinig (das DGM zeigt den Boden darunter)
+  r.bridge = new Uint8Array(r.pts.length);
+  if (r.meta.o === 1) for (const [cx, cy, half] of r.meta.x ?? []) {
+    const inside = r.pts.map(([x, y]) => Math.hypot(x - cx, y - cy) < half + 18);
+    const idx = inside.map((v, i) => v ? i : -1).filter(i => i >= 0); if (!idx.length) continue;
+    const a = Math.max(0, idx[0] - 1), b = Math.min(r.pts.length - 1, idx.at(-1) + 1);
+    for (let i = a + 1; i < b; i++) { h[i] = h[a] + (h[b] - h[a]) * (along[i] - along[a]) / Math.max(1e-6, along[b] - along[a]); r.bridge[i] = 1; }
+  }
   r.h = h.map(v => isNaN(v) ? 0 : Math.round(v * 10) / 10);
 }
 
@@ -423,7 +438,9 @@ for (const r of sideRoads) {
 const radweg = route.surface ?? [];
 const roadPts = [];
 route.x.forEach((x, k) => { const d = k * route.step; const rw = radweg.some(s => d >= s.from && d <= s.to); roadPts.push([x, route.y[k], route.h[k], rw ? 1.7 : (route.width?.[k] ?? 5.6) / 2]); });
-for (const r of sideRoads) r.pts.forEach(([x, y], k) => roadPts.push([x, y, r.h[k], r.w[k] / 2]));
+// Feld-, Wald- und Radwege (H/F/P) nicht einschneiden: sie liegen auf dem Gelände auf (siehe unten)
+const DRAPE = new Set(['H', 'F', 'P']);
+for (const r of sideRoads) if (!DRAPE.has(r.meta.k)) r.pts.forEach(([x, y], k) => { if (!r.bridge[k]) roadPts.push([x, y, r.h[k], r.w[k] / 2]); });
 const ptHash = new Map();
 roadPts.forEach((p, k) => { const kk = `${Math.floor(p[0] / HB)}_${Math.floor(p[1] / HB)}`; (ptHash.get(kk) ?? ptHash.set(kk, []).get(kk)).push(k); });
 const LOW_FULL = cell * 1.2, LOW_END = cell * 3.5, RAISE_FULL = cell * 0.4, RAISE_END = cell * 2;
@@ -438,8 +455,24 @@ for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
   if (lowest < Infinity) grid[j * nx + i] = lowest;
   else if (raiseTo > -Infinity) grid[j * nx + i] = raiseTo;
 }
+// Wege auf das fertige Gelände legen; an Einmündungen weich auf die Höhe der Strecke
+const gridAt = (x, y) => {
+  const fx = Math.max(0, Math.min(nx - 1.001, (x - x0) / cell)), fy = Math.max(0, Math.min(ny - 1.001, (y - y0) / cell)), i = Math.floor(fx), j = Math.floor(fy), u = fx - i, v = fy - j;
+  return grid[j * nx + i] * (1 - u) * (1 - v) + grid[j * nx + i + 1] * u * (1 - v) + grid[(j + 1) * nx + i] * (1 - u) * v + grid[(j + 1) * nx + i + 1] * u * v;
+};
+for (const r of sideRoads) {
+  if (!DRAPE.has(r.meta.k)) continue;
+  const along = [0]; for (let i = 1; i < r.pts.length; i++) along.push(along[i - 1] + Math.hypot(r.pts[i][0] - r.pts[i - 1][0], r.pts[i][1] - r.pts[i - 1][1]));
+  const total = along.at(-1), s0 = r.meta.s?.[0] === 1, s1 = r.meta.s?.[1] === 1;
+  r.h = r.pts.map(([x, y], i) => {
+    const g = gridAt(x, y), dj = Math.min(s0 ? along[i] : Infinity, s1 ? total - along[i] : Infinity);
+    if (dj >= 30) return Math.round(g * 10) / 10;
+    const [bk] = nearestRoute(x, y), t = Math.max(0, (dj - 4) / 26), sm = t * t * (3 - 2 * t);
+    return Math.round((route.h[bk] + (g - route.h[bk]) * sm) * 10) / 10;
+  });
+}
 // Abzweige mit Höhen speichern
-fs.writeFileSync(path.join(dir, 'roads.json'), JSON.stringify({ roads: sideRoads.map(r => ({ w: r.w.map(v => Math.round(v * 10) / 10), p: r.pts.map(([x, y], k) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10, r.h[k]]) })) }));
+fs.writeFileSync(path.join(dir, 'roads.json'), JSON.stringify({ ...roadsJson, roads: sideRoads.map(r => ({ ...r.meta, w: r.w.map(v => Math.round(v * 10) / 10), p: r.pts.map(([x, y], k) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10, r.h[k]]) })) }));
 fs.writeFileSync(path.join(dir, 'terrain.bin'), Buffer.from(Int16Array.from(grid, h => Math.round(h * 10)).buffer));
 fs.writeFileSync(path.join(dir, 'canopy.bin'), Buffer.from(canopy.buffer));
 

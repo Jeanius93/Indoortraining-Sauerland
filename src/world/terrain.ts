@@ -1,7 +1,7 @@
 // Gelände aus dem Höhenraster, Straße als Band, Wald als Instanzen.
 // Koordinaten in Three.js: X = Ost, Y = oben, Z = −Nord
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { inMouth, type Junction } from './roads';
 import type { Route } from '../route';
 import { fbm, rng } from './noise';
 import { ENS, paint } from './lookflag';
@@ -89,12 +89,13 @@ function surfaceTexture(kind: Surface) {
   return t;
 }
 
-interface RibbonPt { x: number; y: number; h: number; hw: number }
+interface RibbonPt { x: number; y: number; h: number; hw: number; mL?: number; mR?: number }   // mL/mR = 0: Einmündung (keine Randlinie, kein Bankett)
 
 /** Fahrbahnband mit Böschung; v-Koordinate entlang der Strecke (texRepeat Meter je Texturhöhe) */
 function ribbon(pts: RibbonPt[], mat: THREE.Material, skirtMat: THREE.Material, lift: number, texRepeat: number, skirtOut = 5, skirtDown = 5, shoulder = 1.5) {
   // Fahrbahn + je Seite: flaches Bankett (shoulder m, leicht abfallend) und Böschung bis skirtDown m tiefer
-  const n = pts.length, pos = new Float32Array(n * 6), uv = new Float32Array(n * 4), sp = new Float32Array(n * 18);
+  const n = pts.length, pos = new Float32Array(n * 6), uv = new Float32Array(n * 4), sp = new Float32Array(n * 18), mask = new Float32Array(n * 4), sc = new Float32Array(n * 18);
+  const top = (skirtMat as THREE.MeshLambertMaterial).color.clone(), slope = new THREE.Color('#6a7f4b');   // Bankett/Gehweg oben, Böschung grün
   let along = 0;
   for (let k = 0; k < n; k++) {
     const a = pts[Math.max(0, k - 2)], b = pts[Math.min(n - 1, k + 2)], p = pts[k];
@@ -103,27 +104,31 @@ function ribbon(pts: RibbonPt[], mat: THREE.Material, skirtMat: THREE.Material, 
     const hh = p.h + lift, ex = -dy, ey = dx;
     pos.set([p.x + ex * p.hw, hh, -(p.y + ey * p.hw), p.x - ex * p.hw, hh, -(p.y - ey * p.hw)], k * 6);
     uv.set([0, along / texRepeat, 1, along / texRepeat], k * 4);
+    const mL = p.mL ?? 1, mR = p.mR ?? 1; mask.set([mL, mR, mL, mR], k * 4);
     for (const [side, off] of [[1, 0], [-1, 9]] as const) {
       const sx = ex * side, sy = ey * side, w1 = p.hw + shoulder, w2 = w1 + skirtOut;
       sp.set([p.x + sx * p.hw, hh - 0.02, -(p.y + sy * p.hw),
         p.x + sx * w1, hh - 0.1, -(p.y + sy * w1),
         p.x + sx * w2, hh - skirtDown, -(p.y + sy * w2)], k * 18 + off);
+      sc.set([top.r, top.g, top.b, top.r, top.g, top.b, slope.r, slope.g, slope.b], k * 18 + off);
     }
   }
   const idx: number[] = [], sidx: number[] = [];
   for (let k = 0; k < n - 1; k++) {
     const a = k * 2; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
-    for (const sideOff of [0, 3]) for (const seg of [0, 1]) {
-      const c = k * 6 + sideOff + seg, d = c + 6;
-      sidx.push(c, d, c + 1, c + 1, d, d + 1);
+    for (const sideOff of [0, 3]) {
+      const m = sideOff === 0 ? 'mL' : 'mR';
+      if ((pts[k][m] ?? 1) < 0.5 || (pts[k + 1][m] ?? 1) < 0.5) continue;      // Mündung: Bankett aussparen
+      for (const seg of [0, 1]) { const c = k * 6 + sideOff + seg, d = c + 6; sidx.push(c, d, c + 1, c + 1, d, d + 1); }
     }
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setAttribute('aMask', new THREE.BufferAttribute(mask, 2));
   g.setIndex(idx); g.computeVertexNormals();
   const sg = new THREE.BufferGeometry();
-  sg.setAttribute('position', new THREE.BufferAttribute(sp, 3)); sg.setIndex(sidx); sg.computeVertexNormals();
-  const road = new THREE.Mesh(g, mat), skirt = new THREE.Mesh(sg, skirtMat);
+  sg.setAttribute('position', new THREE.BufferAttribute(sp, 3)); sg.setAttribute('color', new THREE.BufferAttribute(sc, 3)); sg.setIndex(sidx); sg.computeVertexNormals();
+  const road = new THREE.Mesh(g, mat), skirt = new THREE.Mesh(sg, skirtFor(skirtMat));
   road.receiveShadow = true; skirt.receiveShadow = true;
   return [road, skirt];
 }
@@ -131,18 +136,27 @@ function ribbon(pts: RibbonPt[], mat: THREE.Material, skirtMat: THREE.Material, 
 const roadMat = (kind: Surface, offset: number) => {
   const map = surfaceTexture(kind); map.colorSpace = THREE.NoColorSpace;
   const m = new THREE.MeshStandardMaterial({ map, roughness: 0.92, metalness: 0, polygonOffset: true, polygonOffsetFactor: offset, polygonOffsetUnits: offset, side: THREE.DoubleSide });
-  m.onBeforeCompile = sh => { sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', '#include <map_fragment>\ndiffuseColor.rgb = pow(diffuseColor.rgb, vec3(2.2));'); };
+  m.onBeforeCompile = sh => {
+    // Randlinie an Einmündungen ausblenden: dort die Textur aus der Fahrbahnmitte daneben verwenden
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec2 aMask; varying vec2 vMask;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvMask = aMask;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec2 vMask;').replace('#include <map_fragment>', `#include <map_fragment>
+      if ((vMapUv.x < 0.075 && vMask.x < 0.5) || (vMapUv.x > 0.925 && vMask.y < 0.5)) diffuseColor = texture2D(map, vec2(vMapUv.x < 0.5 ? vMapUv.x + 0.32 : vMapUv.x - 0.32, vMapUv.y));
+      diffuseColor.rgb = pow(diffuseColor.rgb, vec3(2.2));`);
+  };
   return m;
 };
 const skirtMaterial = (color = '#6f8350') => new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide });
+const skirtVC = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+const skirtFor = (_m: THREE.Material) => skirtVC;   // Farben stecken in den Vertexfarben
 
 /** Hauptstrecke: Straße (5,6 m, Markierung) bzw. Radweg (3,4 m, roter Belag) je Abschnitt */
-export function buildRoad(route: Route, towns: { from: number; to: number }[] = []) {
+export function buildRoad(route: Route, towns: { from: number; to: number }[] = [], junctions: Junction[] = []) {
   const { x, y, h, step } = route.data, n = x.length, surf = route.data.surface ?? [];
+  const rb = (k: number) => (route.data.roundabouts ?? []).some(r => k * step >= r.from && k * step <= r.to);
   const isRad = (k: number) => surf.some(s => k * step >= s.from && k * step <= s.to);
   const inTown = (k: number) => towns.some(t => k * step >= t.from && k * step <= t.to);
   const dup = (k: number) => (route.data.overlap ?? []).some(o => k * step > o[0] + 8 && k * step < o[1] - 8);
-  const state = (k: number) => dup(k) ? 4 : (isRad(k) ? 2 : 0) + (inTown(k) ? 1 : 0);
+  const state = (k: number) => dup(k) || rb(k) ? 4 : (isRad(k) ? 2 : 0) + (inTown(k) ? 1 : 0);   // Kreisverkehr: zeichnet die Kreisfahrbahn
   const group = new THREE.Group(), grass = skirtMaterial(), paving = skirtMaterial('#a3a19b');
   const mats = { strasse: roadMat('strasse', -3), radweg: roadMat('radweg', -3) };
   let k = 0;
@@ -151,29 +165,11 @@ export function buildRoad(route: Route, towns: { from: number; to: number }[] = 
     while (e < n - 1 && state(e + 1) === st) e++;
     if (st === 4) { k = e + 1; continue; }     // dieselbe Straße wurde schon bei der ersten Durchfahrt gezeichnet
     const pts: RibbonPt[] = [];
-    for (let i = Math.max(0, k - 1); i <= Math.min(n - 1, e + 1); i++) pts.push({ x: x[i], y: y[i], h: h[i], hw: rad ? 1.7 : (route.data.width?.[i] ?? 5.6) / 2 });
+    for (let i = Math.max(0, k - 1); i <= Math.min(n - 1, e + 1); i++) pts.push({ x: x[i], y: y[i], h: h[i], hw: rad ? 1.7 : (route.data.width?.[i] ?? 5.6) / 2,
+      mL: inMouth(junctions, route, i * step, 1) ? 0 : 1, mR: inMouth(junctions, route, i * step, -1) ? 0 : 1 });
     // innerorts: gepflasterter Gehweg statt Grasbankett
     group.add(...ribbon(pts, rad ? mats.radweg : mats.strasse, town ? paving : grass, 0.12, rad ? 26 : 24, 5, 5, town ? 2.0 : 1.5));
     k = e + 1;
-  }
-  return group;
-}
-
-/** Abzweigende Straßen (ohne Markierung), etwas tiefer als die Hauptstrecke, damit diese an Einmündungen oben liegt */
-export function buildSideRoads(roads: { w: number[]; p: number[][] }[]) {
-  const group = new THREE.Group(), mat = roadMat('neben', -1), skirtMat = skirtMaterial();
-  // in 1-km-Kacheln zu wenigen Meshes zusammenfassen (sonst über 1000 Zeichenaufrufe)
-  const tiles = new Map<string, { road: THREE.BufferGeometry[]; skirt: THREE.BufferGeometry[] }>();
-  for (const r of roads) {
-    if (r.p.length < 2) continue;
-    const [road, skirt] = ribbon(r.p.map((p, i) => ({ x: p[0], y: p[1], h: p[2], hw: r.w[i] / 2 })), mat, skirtMat, 0.06, 24, 3, 3, 0.8);
-    const k = `${Math.floor(r.p[0][0] / 1000)}_${Math.floor(r.p[0][1] / 1000)}`;
-    const t = tiles.get(k) ?? tiles.set(k, { road: [], skirt: [] }).get(k)!;
-    t.road.push(road.geometry); t.skirt.push(skirt.geometry);
-  }
-  for (const t of tiles.values()) for (const [list, m] of [[t.road, mat], [t.skirt, skirtMat]] as const) {
-    const g = mergeGeometries(list); if (!g) continue;
-    const mesh = new THREE.Mesh(g, m); mesh.receiveShadow = true; group.add(mesh);
   }
   return group;
 }
@@ -594,7 +590,9 @@ export function buildLanduseTerrain(hf: Heightfield, lu: Uint8Array, info: { px:
       const li = Math.floor((x - x0) / info.px), lj = Math.floor((y - y0) / info.px);
       let cls = li >= 0 && lj >= 0 && li < info.w && lj < info.h ? lu[lj * info.w + li] : 0;
       // Straßenfläche direkt neben unserer Fahrbahn: in Orten Gehweg (gepflastert), sonst Bankett (Gras)
-      if ((cls === 9 || cls === 10) && routeDist(x, y) < 12) cls = townAt(li, lj) ? 15 : 14;
+      // Straßenflurstücke: die Fahrbahnen selbst sind eigene Bänder (Straßennetz) – die Fläche daneben ist
+      // innerorts gepflastert (Gehweg/Parkplatz), außerorts Bankett; Wege nahe der Strecke ebenso
+      if (cls === 9 || (cls === 10 && routeDist(x, y) < 12)) cls = townAt(li, lj) ? 15 : routeDist(x, y) < 12 ? 14 : 13;
       if (cls === 2) {
         // Feld: Kultur wechselt großräumig, Streifen in wechselnder Richtung
         const crop = CROPS[Math.floor(fbm(x / 260 + 7, y / 260 - 3, 2) * CROPS.length * 1.3) % CROPS.length];

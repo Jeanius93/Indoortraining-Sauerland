@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import type { Route } from '../route';
 import { StaticSet } from './life/common';
+import { inMouth, inRoundabout, type Junction } from './roads';
 
 export interface FurnitureData {
   towns: { from: number; to: number; name: string; sub: string }[];
@@ -75,7 +76,9 @@ function townSign(name: string, sub: string, exit: boolean) {
 }
 
 // ---------- Aufbau ----------
-export function buildFurniture(route: Route, f: FurnitureData, quality: 'low' | 'high') {
+export function buildFurniture(route: Route, f: FurnitureData, quality: 'low' | 'high', junctions: Junction[] = []) {
+  // nichts in Einmündungen und Kreisverkehren (dort sind Fahrbahn bzw. Mittelinsel)
+  const blocked = (d: number, side: number, extra = 0) => inMouth(junctions, route, d, side, extra) || inRoundabout(route, d, extra + 6);
   const group = new THREE.Group();
   const up = new THREE.Vector3(0, 1, 0), q = new THREE.Quaternion(), s1 = new THREE.Vector3(1, 1, 1), m = new THREE.Matrix4();
 
@@ -83,7 +86,9 @@ export function buildFurniture(route: Route, f: FurnitureData, quality: 'low' | 
   for (const t of f.towns) {
     for (const [d, exit] of [[t.from, false], [t.to, true]] as const) {
       if (d < 20 || d > route.length - 20) continue;
-      const p = place(route, d, -1, HW(route, d) + 2.5, -0.1), sign = townSign(t.name, t.sub, exit);
+      let ds = d; for (let i = 0; i < 12 && blocked(ds, -1, 2); i++) ds += exit ? 4 : -4;   // nicht in eine Einmündung stellen
+      if (blocked(ds, -1, 2)) continue;
+      const p = place(route, ds, -1, HW(route, ds) + 2.5, -0.1), sign = townSign(t.name, t.sub, exit);
       sign.position.copy(p.pos); sign.rotation.y = -p.heading + 0.12;    // leicht zur Fahrbahn gedreht
       group.add(sign);
     }
@@ -104,7 +109,7 @@ export function buildFurniture(route: Route, f: FurnitureData, quality: 'low' | 
   const set = new StaticSet(350);
   set.kind('post', postGeo, postMat); set.kind('rR', reflR, reflMat); set.kind('rL', reflL, reflMatL);
   f.posts.forEach(([d, side]) => {
-    if (isOverlap(route, d)) return;
+    if (isOverlap(route, d) || blocked(d, side, 3)) return;
     const p = place(route, d, side, HW(route, d) + 0.75, -0.14);
     q.setFromAxisAngle(up, -p.heading);
     m.compose(p.pos, q, s1); set.add('post', m.clone()); set.add(side < 0 ? 'rR' : 'rL', m.clone());
@@ -113,7 +118,16 @@ export function buildFurniture(route: Route, f: FurnitureData, quality: 'low' | 
   // Schutzplanken: Profil (3 Streifen = Wellenform) auf Pfosten alle 2 m, Enden zum Boden geneigt
   const railMat = new THREE.MeshStandardMaterial({ color: '#b9bec3', roughness: 0.35, metalness: 0.75, side: THREE.DoubleSide });
   const railPosts: THREE.Matrix4[] = [];
+  // Schutzplanken an Einmündungen unterbrechen
+  const railParts: { from: number; to: number; side: number }[] = [];
   for (const r of f.rails) {
+    let a = r.from;
+    for (let d = r.from; d <= r.to + 0.01; d += 2) {
+      if (blocked(d, r.side, 4)) { if (d - 2 - a >= 8) railParts.push({ from: a, to: d - 2, side: r.side }); a = d + 2; }
+    }
+    if (r.to - a >= 8) railParts.push({ from: a, to: r.to, side: r.side });
+  }
+  for (const r of railParts) {
     if (isOverlap(route, (r.from + r.to) / 2)) continue;
     const pos: number[] = [], idx: number[] = [];
     const prof = [[0.45, 0.02], [0.55, -0.02], [0.65, 0.02], [0.75, -0.01]];   // Höhe, Ausbuchtung
@@ -143,7 +157,7 @@ export function buildFurniture(route: Route, f: FurnitureData, quality: 'low' | 
   ]);
   set.kind('lamp', lampGeo, new THREE.MeshLambertMaterial({ vertexColors: true }));
   f.lights.forEach(([d, side]) => {
-    if (isOverlap(route, d)) return;
+    if (isOverlap(route, d) || blocked(d, side, 2)) return;
     const p = place(route, d, side, HW(route, d) + 2.3, -0.12);
     q.setFromAxisAngle(up, side < 0 ? Math.PI - p.heading : -p.heading);
     m.compose(p.pos, q, s1); set.add('lamp', m.clone());
@@ -152,25 +166,27 @@ export function buildFurniture(route: Route, f: FurnitureData, quality: 'low' | 
 
   // Bordsteine innerorts (beidseitig, 12 cm hoch)
   const curbMat = new THREE.MeshLambertMaterial({ color: '#c9c7c0' });
+  // alle Bordsteinstücke in einer Geometrie (Unterbrechungen an Einmündungen = neue Reihe, kein neues Objekt)
+  const pos: number[] = [], idx: number[] = [];
   for (const t of f.towns) {
     for (const side of [-1, 1]) {
-      let pos: number[] = [], idx: number[] = [], row = 0;
-      const flush = () => {
-        if (row > 1) { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
-          const mesh = new THREE.Mesh(g, curbMat); mesh.material.side = THREE.DoubleSide; mesh.receiveShadow = true; group.add(mesh); }
-        pos = []; idx = []; row = 0;
-      };
+      let row = 0, base = 0;
+      const flush = () => { if (row <= 1) pos.length = base * 3; row = 0; base = pos.length / 3; };
       for (let d = t.from; d <= t.to; d += 4) {
-        if (isOverlap(route, d)) { flush(); continue; }
+        if (isOverlap(route, d) || blocked(d, side, 0.5)) { flush(); continue; }
         const hw = HW(route, d);
         for (const [off, lift] of [[hw, 0.0], [hw, 0.12], [hw + 0.2, 0.12], [hw + 0.2, 0.02]] as const) {
           const p = place(route, d, side, off, lift); pos.push(p.pos.x, p.pos.y, p.pos.z);
         }
-        if (row) for (let k = 0; k < 3; k++) { const a = (row - 1) * 4 + k, b = row * 4 + k; idx.push(a, b, a + 1, a + 1, b, b + 1); }
+        if (row) for (let k = 0; k < 3; k++) { const a = base + (row - 1) * 4 + k, b = base + row * 4 + k; idx.push(a, b, a + 1, a + 1, b, b + 1); }
         row++;
       }
       flush();
     }
+  }
+  if (idx.length) {
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+    curbMat.side = THREE.DoubleSide; const mesh = new THREE.Mesh(g, curbMat); mesh.receiveShadow = true; group.add(mesh);
   }
   return group;
 }

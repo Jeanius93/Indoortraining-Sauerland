@@ -11,7 +11,9 @@ import { buildFurniture } from './furniture';
 import { buildLandmarks } from './landmarks';
 import { GrassField } from './grass';
 import { Life } from './life';
-import { SUN, shaderTime, BuildingField, Heightfield, TreeField, buildLanduseTerrain, buildChimneys, houseMaterial, buildRoad, buildSideRoads, updateTerrainLod, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
+import { SUN, shaderTime, BuildingField, Heightfield, TreeField, buildLanduseTerrain, buildChimneys, houseMaterial, buildRoad, updateTerrainLod, buildTerrain, buildTrees, makeRouteDistance } from './terrain';
+import { buildRoadNetwork, findJunctions } from './roads';
+import { Roads, type LifeCtx } from './life/common';
 
 export const cameraModes = ['Verfolger', 'Seite', 'Ego', 'Drohne'] as const;
 export type CameraMode = typeof cameraModes[number];
@@ -39,6 +41,7 @@ export class World {
   private life: Life | null = null;
   private terrain: THREE.Object3D | null = null;
   private furniture: THREE.Object3D | null = null;
+  private roadNet: THREE.Object3D | null = null;
   private lat = 0;
   /** Test-/Entwicklungsansicht: feste Kamera (lokale Koordinaten x Ost, y Nord, z Höhe) */
   debugView: { from: number[]; to: number[] } | null = null;
@@ -80,11 +83,26 @@ export class World {
     const ortho = usesPhoto(this.look) ? data.ortho : undefined;
     this.terrain = data.landuse && lu ? buildLanduseTerrain(this.hf, data.landuse, lu, dist, quality, data.rawHeights, ortho) : buildTerrain(this.hf, dist, data.canopy);
     add('terrain', this.terrain);
-    add('roads', buildRoad(route, data.furniture?.towns));
-    if (data.furniture) { this.furniture = buildFurniture(route, data.furniture, quality); add('other', this.furniture); }
+    const junctions = findJunctions(route, data.sideRoads ?? []);
+    add('roads', buildRoad(route, data.furniture?.towns, junctions));
+    if (data.furniture) { this.furniture = buildFurniture(route, data.furniture, quality, junctions); add('other', this.furniture); }
     if (data.landmarks) add('other', buildLandmarks(data.landmarks, this.hf));
-    if (data.landuse && lu) { this.grass = new GrassField(route, this.hf, data.landuse, lu, quality); add('grass', this.grass.group); }
-    if (data.sideRoads) add('roads', buildSideRoads(data.sideRoads));
+    if (data.landuse && lu) {
+      const rd = new Roads({ route, sideRoads: data.sideRoads } as LifeCtx);
+      this.grass = new GrassField(route, this.hf, data.landuse, lu, quality, (x, y) => rd.dist(x, y)); add('grass', this.grass.group);
+    }
+    if (data.sideRoads) {
+      // innerorts: Siedlungs-/Gewerbefläche im Umkreis von 20 m (Gehwege statt Bankett, kurze Leitlinien)
+      const lum = data.landuse, townAt = (x: number, y: number) => {
+        if (!lum || !lu) return false;
+        for (const [a, b] of [[0, 0], [20, 0], [-20, 0], [0, 20], [0, -20]]) {
+          const i = Math.floor((x + a - route.data.terrain.x0) / lu.px), j = Math.floor((y + b - route.data.terrain.y0) / lu.px);
+          if (i >= 0 && j >= 0 && i < lu.w && j < lu.h && (lum[j * lu.w + i] === 6 || lum[j * lu.w + i] === 7)) return true;
+        }
+        return false;
+      };
+      this.roadNet = buildRoadNetwork(route, { roads: data.sideRoads, rings: data.rings }, junctions, townAt); add('roads', this.roadNet);
+    }
     const w = route.data.world;
     const fogFar = (this.scene.fog as THREE.Fog).far;
     if (data.houses) {
@@ -163,7 +181,7 @@ export class World {
 
     // Detailstufen nachführen (alle 0,4 s)
     this.lodTimer -= dt;
-    if (this.lodTimer <= 0) { this.lodTimer = 0.4; if (this.terrain) updateTerrainLod(this.terrain, this.camera.position); this.furniture?.userData.update?.(this.camera.position); this.trees?.update(this.camera.position); this.buildings?.update(this.camera.position); if (this.houses) updateHouses(this.houses, this.camera.position); this.grass?.update(this.camera.position); }
+    if (this.lodTimer <= 0) { this.lodTimer = 0.4; if (this.terrain) updateTerrainLod(this.terrain, this.camera.position); this.furniture?.userData.update?.(this.camera.position); this.roadNet?.userData.update?.(this.camera.position); this.trees?.update(this.camera.position); this.buildings?.update(this.camera.position); if (this.houses) updateHouses(this.houses, this.camera.position, 2200); this.grass?.update(this.camera.position); }
 
     // Schatten-Kamera folgt dem Avatar
     this.sun.position.copy(a.position).addScaledVector(SUN, 600);
