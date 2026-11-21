@@ -157,13 +157,19 @@ export class Village {
       if (tw.to - tw.from < 250) continue;
       for (const [frac, side] of [[0.5, -1], [0.5, 1]] as const) {
         if (side > 0 && r() < 0.5) continue;
-        for (let tries = 0; tries < 8; tries++) {
+        for (let tries = 0; tries < 14; tries++) {
           const d = tw.from + (tw.to - tw.from) * frac + (tries % 2 ? 1 : -1) * tries * 15 + (side > 0 ? 12 : 0), hw = halfWidth(route, d);
           const p = beside(route, d, side, hw + 2.6), fx = Math.sin(p.heading), fy = Math.cos(p.heading);
-          if ([-1.8, 0, 1.8].some(a => houses?.inside(p.x + fx * a, p.y + fy * a, 1.2) || roads.dist(p.x + fx * a, p.y + fy * a) < 0.8)) continue;
+          // ganze Grundfläche samt Freiraum dahinter prüfen: kein Haus, keine andere Straße, kein Wasser/Wald, nicht am Hang
+          const ox = -Math.cos(p.heading) * side, oy = Math.sin(p.heading) * side;
+          const blocked = [-2.2, -1.1, 0, 1.1, 2.2].some(a => [0, 0.9, 1.8, 3.2].some(b => {
+            const x = p.x + fx * a + ox * b, y = p.y + fy * a + oy * b, lc = land.at(x, y);
+            return houses?.inside(x, y, 1.6) || roads.dist(x, y) < 0.8 || lc === 8 || FOREST.has(lc) || Math.abs(hf.at(x, y) - p.h) > (b > 2 ? 1.2 : 0.6);
+          }));
+          if (blocked) continue;
           const yaw = Math.atan2(fy, fx) + (side < 0 ? Math.PI : 0), m = mat(p.x, p.y, p.h + 0.1, yaw);
           const g1 = new THREE.Mesh(shelter, G.lambert), g2 = new THREE.Mesh(panes, G.glass);
-          g1.applyMatrix4(m); g2.applyMatrix4(m); g1.castShadow = true; this.group.add(g1, g2);
+          g1.applyMatrix4(m); g2.applyMatrix4(m); g1.castShadow = true; g1.name = 'bus'; this.group.add(g1, g2);
           const sp = beside(route, d + 2.5 * (side < 0 ? 1 : -1), side, hw + 0.9);
           const pole = new THREE.Mesh(cyl(0.04, 0.04, 2.6, 0, 1.3, 0, 8), G.lambert.clone()); (pole.material as THREE.MeshLambertMaterial).vertexColors = false; (pole.material as THREE.MeshLambertMaterial).color.set('#9aa0a6');
           const sign = new THREE.Mesh(new THREE.CircleGeometry(0.3, 24).translate(0, 2.55, 0.05), busSign);

@@ -60,6 +60,25 @@ const GradeShader = {
 };
 
 
+/** Dunst erst ab 150 m und höhenabhängig: Kuppen über der Kamera bleiben klar, Täler darunter dunstiger */
+let fogPatched = false;
+function heightFog() {
+  if (fogPatched) return; fogPatched = true;
+  const C = THREE.ShaderChunk;
+  C.fog_pars_vertex = '#ifdef USE_FOG\n varying float vFogDepth; varying float vFogRise;\n#endif';
+  C.fog_vertex = '#ifdef USE_FOG\n vFogDepth = - mvPosition.z; vFogRise = (transpose(mat3(viewMatrix)) * mvPosition.xyz).y;\n#endif';
+  C.fog_pars_fragment = '#ifdef USE_FOG\n uniform vec3 fogColor; varying float vFogDepth; varying float vFogRise;\n #ifdef FOG_EXP2\n  uniform float fogDensity;\n #else\n  uniform float fogNear; uniform float fogFar;\n #endif\n#endif';
+  C.fog_fragment = `#ifdef USE_FOG
+ #ifdef FOG_EXP2
+  float fogD = max(0.0, vFogDepth - 150.0) * fogDensity;
+  float fogFactor = 1.0 - exp(-fogD * fogD * clamp(exp(-vFogRise * 0.003), 0.7, 1.3));
+ #else
+  float fogFactor = smoothstep(fogNear, fogFar, vFogDepth);
+ #endif
+ gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, fogFactor);
+#endif`;
+}
+
 /** Look anwenden. Liefert einen EffectComposer (oder null, wenn normal gerendert wird). */
 export function applyLook(look: Look, t: LookTarget): EffectComposer | null {
   const { scene, renderer } = t;
@@ -76,11 +95,12 @@ export function applyLook(look: Look, t: LookTarget): EffectComposer | null {
     const su = (t.sky.material as THREE.ShaderMaterial).uniforms;
     su.zenith.value = new THREE.Color('#3a7bd0'); su.horizon.value = new THREE.Color('#d9e6e8'); su.coverage.value = 0.5;
     const haze = new THREE.Color('#c9d6d2');
-    scene.background = haze; scene.fog = new THREE.FogExp2(haze, 0.00058);
+    scene.background = haze; scene.fog = new THREE.FogExp2(haze, 0.0005);
+    heightFog();
     t.sun.color.set('#ffdca8'); t.sun.intensity = 3.4;
     t.hemi.color.set('#cfe0ff'); t.hemi.groundColor.set('#4d5a2c'); t.hemi.intensity = 1.25;
     renderer.toneMappingExposure = 1.1;
-    bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.45, 0.75, 0.78);
+    bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.36, 0.7, 0.84);
     u.saturation.value = 1.12; u.contrast.value = 1.06; u.brightness.value = 0.01; u.vignette.value = 0.4; u.tint.value = new THREE.Color(1.04, 1.0, 0.92);
   }
 

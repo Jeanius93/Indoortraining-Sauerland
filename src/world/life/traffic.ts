@@ -45,16 +45,22 @@ export class Traffic {
     // parkende Autos am Straßenrand innerorts
     this.parked = new StaticSet(500);
     this.parked.kind('body', g.body, bodyMat, true); this.parked.kind('detail', g.detail, detMat, true);
-    for (const t of ctx.towns) for (let d = t.from + 30; d < t.to - 30; d += 18) {
-      if (r() > 0.2 || isRadweg(route, d)) continue;
-      const side = r() < 0.55 ? -1 : 1, hw = halfWidth(route, d), p = beside(route, d, side, hw + 1.7);
-      const lc = land.at(p.x, p.y);
-      if (lc === 8 || roads.dist(p.x, p.y) < 0.6 || houses?.inside(p.x, p.y, 2.6)) continue;
-      const fx = Math.sin(p.heading), fy = Math.cos(p.heading);
-      if ([-2.3, 2.3].some(a => houses?.inside(p.x + fx * a, p.y + fy * a, 1.2) || roads.dist(p.x + fx * a, p.y + fy * a) < 0.4)) continue;
-      const m = mat(p.x, p.y, this.ctx.hf.at(p.x, p.y) - 0.02, Math.atan2(fy, fx) + (r() < 0.5 ? Math.PI : 0));
+    // Autos stehen quer in Einfahrten/Stellplätzen hinter dem Gehweg (nicht auf Gehweg oder Fahrbahn)
+    for (const t of ctx.towns) for (let d = t.from + 30; d < t.to - 30; d += 14) {
+      if (r() > 0.3 || isRadweg(route, d)) continue;
+      const side = r() < 0.5 ? -1 : 1, hw = halfWidth(route, d), p = beside(route, d, side, hw + 2.3 + 2.4);
+      const fx = Math.sin(p.heading), fy = Math.cos(p.heading), ox = -Math.cos(p.heading) * side, oy = Math.sin(p.heading) * side;
+      const z = this.ctx.hf.at(p.x, p.y);
+      if (Math.abs(z - p.h) > 0.8) continue;
+      let bad = false;
+      for (const a of [-1.3, 0, 1.3]) for (const b of [-2.3, -1.1, 0, 1.1, 2.3]) {
+        const x = p.x + fx * a + ox * b, y = p.y + fy * a + oy * b, lc = land.at(x, y);
+        if (houses?.inside(x, y, 0.5) || roads.dist(x, y) < 0.5 || lc === 8 || lc === 2 || lc === 3 || lc === 4 || lc === 5 || Math.abs(this.ctx.hf.at(x, y) - z) > 0.45) bad = true;
+      }
+      if (bad) continue;
+      const m = mat(p.x, p.y, z - 0.02, Math.atan2(oy, ox) + (r() < 0.6 ? Math.PI : 0));
       this.parked.add('body', m, new THREE.Color(COLORS[Math.floor(r() * COLORS.length)])); this.parked.add('detail', m);
-      d += 6;
+      d += 8;
     }
     this.parked.build(); this.group.add(this.parked.group);
   }
