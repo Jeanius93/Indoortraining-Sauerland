@@ -45,7 +45,7 @@ export class Roadside {
       let prev: [number, number] | null = null, acc = 0;
       for (let k = 0; k < n - 1; k++) {
         const d = k * step, hw = halfWidth(route, d), [x, y] = side0(k, side, hw + 2.9), [x2, y2] = side0(k, side, hw + 9);
-        const ok = !inTown(ctx, d) && land.at(x, y) === 1 && land.at(x2, y2) === 1 && roads.dist(x, y) > 1.8 && !houses?.inside(x, y, 2);
+        const ok = !inTown(ctx, d) && !(route.data.overlap ?? []).some(o => d > o[0] && d < o[1]) && land.at(x, y) === 1 && land.at(x2, y2) === 1 && roads.dist(x, y) > 1.8 && !houses?.inside(x, y, 2);
         if (!ok) { prev = null; continue; }
         acc += step; if (prev && acc < 3.3) continue; acc = 0;
         const z = hf.at(x, y) - 0.05;

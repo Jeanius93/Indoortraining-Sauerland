@@ -3,21 +3,49 @@
   "id": "hausrunde",
   "name": "Hausrunde",
   "length": 39890,
-  "ascent": 369,
+  "ascent": 390,
+  "maxGrade": 9
+ },
+ {
+  "id": "runde-5",
+  "name": "Fürwigge-Runde über Stottmert",
+  "length": 19170,
+  "ascent": 340,
+  "maxGrade": 14
+ },
+ {
+  "id": "runde-7",
+  "name": "Lüdenscheid-Runde über Gasmert",
+  "length": 30950,
+  "ascent": 408,
+  "maxGrade": 13
+ },
+ {
+  "id": "runde-6",
+  "name": "Plettenberg-Runde über Köbbinghausen",
+  "length": 32400,
+  "ascent": 365,
   "maxGrade": 8.5
  },
  {
   "id": "runde-2",
   "name": "Valbert-Runde über Elsen",
   "length": 37215,
-  "ascent": 560,
-  "maxGrade": 10.5
+  "ascent": 582,
+  "maxGrade": 10
  },
  {
   "id": "runde-3",
   "name": "Valbert-Runde über Rärin",
   "length": 42160,
-  "ascent": 509,
-  "maxGrade": 10
+  "ascent": 564,
+  "maxGrade": 12.5
+ },
+ {
+  "id": "runde-4",
+  "name": "Große Runde über Meinerzhagen und Valbert",
+  "length": 72440,
+  "ascent": 1056,
+  "maxGrade": 13.5
  }
 ]

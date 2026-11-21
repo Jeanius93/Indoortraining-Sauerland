@@ -11,6 +11,8 @@ export interface FurnitureData {
   lights: [number, number][];
 }
 
+/** doppelt befahrener Abschnitt: Ausstattung steht schon von der ersten Durchfahrt */
+export const isOverlap = (route: Route, d: number) => (route.data.overlap ?? []).some(o => d > o[0] && d < o[1]);
 const HW = (route: Route, d: number) => (route.data.surface ?? []).some(s => d >= s.from && d <= s.to) ? 1.7
   : (route.data.width?.[Math.min(route.n - 1, Math.round(d / route.data.step))] ?? 5.6) / 2;
 
@@ -102,6 +104,7 @@ export function buildFurniture(route: Route, f: FurnitureData, quality: 'low' | 
   const set = new StaticSet(350);
   set.kind('post', postGeo, postMat); set.kind('rR', reflR, reflMat); set.kind('rL', reflL, reflMatL);
   f.posts.forEach(([d, side]) => {
+    if (isOverlap(route, d)) return;
     const p = place(route, d, side, HW(route, d) + 0.75, -0.14);
     q.setFromAxisAngle(up, -p.heading);
     m.compose(p.pos, q, s1); set.add('post', m.clone()); set.add(side < 0 ? 'rR' : 'rL', m.clone());
@@ -111,6 +114,7 @@ export function buildFurniture(route: Route, f: FurnitureData, quality: 'low' | 
   const railMat = new THREE.MeshStandardMaterial({ color: '#b9bec3', roughness: 0.35, metalness: 0.75, side: THREE.DoubleSide });
   const railPosts: THREE.Matrix4[] = [];
   for (const r of f.rails) {
+    if (isOverlap(route, (r.from + r.to) / 2)) continue;
     const pos: number[] = [], idx: number[] = [];
     const prof = [[0.45, 0.02], [0.55, -0.02], [0.65, 0.02], [0.75, -0.01]];   // Höhe, Ausbuchtung
     let row = 0;
@@ -139,6 +143,7 @@ export function buildFurniture(route: Route, f: FurnitureData, quality: 'low' | 
   ]);
   set.kind('lamp', lampGeo, new THREE.MeshLambertMaterial({ vertexColors: true }));
   f.lights.forEach(([d, side]) => {
+    if (isOverlap(route, d)) return;
     const p = place(route, d, side, HW(route, d) + 2.3, -0.12);
     q.setFromAxisAngle(up, side < 0 ? Math.PI - p.heading : -p.heading);
     m.compose(p.pos, q, s1); set.add('lamp', m.clone());
@@ -149,8 +154,14 @@ export function buildFurniture(route: Route, f: FurnitureData, quality: 'low' | 
   const curbMat = new THREE.MeshLambertMaterial({ color: '#c9c7c0' });
   for (const t of f.towns) {
     for (const side of [-1, 1]) {
-      const pos: number[] = [], idx: number[] = []; let row = 0;
+      let pos: number[] = [], idx: number[] = [], row = 0;
+      const flush = () => {
+        if (row > 1) { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+          const mesh = new THREE.Mesh(g, curbMat); mesh.material.side = THREE.DoubleSide; mesh.receiveShadow = true; group.add(mesh); }
+        pos = []; idx = []; row = 0;
+      };
       for (let d = t.from; d <= t.to; d += 4) {
+        if (isOverlap(route, d)) { flush(); continue; }
         const hw = HW(route, d);
         for (const [off, lift] of [[hw, 0.0], [hw, 0.12], [hw + 0.2, 0.12], [hw + 0.2, 0.02]] as const) {
           const p = place(route, d, side, off, lift); pos.push(p.pos.x, p.pos.y, p.pos.z);
@@ -158,8 +169,7 @@ export function buildFurniture(route: Route, f: FurnitureData, quality: 'low' | 
         if (row) for (let k = 0; k < 3; k++) { const a = (row - 1) * 4 + k, b = row * 4 + k; idx.push(a, b, a + 1, a + 1, b, b + 1); }
         row++;
       }
-      const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
-      const mesh = new THREE.Mesh(g, curbMat); mesh.material.side = THREE.DoubleSide; mesh.receiveShadow = true; group.add(mesh);
+      flush();
     }
   }
   return group;

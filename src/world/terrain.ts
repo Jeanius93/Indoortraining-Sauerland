@@ -141,13 +141,15 @@ export function buildRoad(route: Route, towns: { from: number; to: number }[] = 
   const { x, y, h, step } = route.data, n = x.length, surf = route.data.surface ?? [];
   const isRad = (k: number) => surf.some(s => k * step >= s.from && k * step <= s.to);
   const inTown = (k: number) => towns.some(t => k * step >= t.from && k * step <= t.to);
-  const state = (k: number) => (isRad(k) ? 2 : 0) + (inTown(k) ? 1 : 0);
+  const dup = (k: number) => (route.data.overlap ?? []).some(o => k * step > o[0] + 8 && k * step < o[1] - 8);
+  const state = (k: number) => dup(k) ? 4 : (isRad(k) ? 2 : 0) + (inTown(k) ? 1 : 0);
   const group = new THREE.Group(), grass = skirtMaterial(), paving = skirtMaterial('#a3a19b');
   const mats = { strasse: roadMat('strasse', -3), radweg: roadMat('radweg', -3) };
   let k = 0;
   while (k < n - 1) {
-    const st = state(k), rad = st >= 2, town = (st & 1) === 1; let e = k;
+    const st = state(k), rad = st === 2 || st === 3, town = (st & 1) === 1; let e = k;
     while (e < n - 1 && state(e + 1) === st) e++;
+    if (st === 4) { k = e + 1; continue; }     // dieselbe Straße wurde schon bei der ersten Durchfahrt gezeichnet
     const pts: RibbonPt[] = [];
     for (let i = Math.max(0, k - 1); i <= Math.min(n - 1, e + 1); i++) pts.push({ x: x[i], y: y[i], h: h[i], hw: rad ? 1.7 : (route.data.width?.[i] ?? 5.6) / 2 });
     // innerorts: gepflasterter Gehweg statt Grasbankett

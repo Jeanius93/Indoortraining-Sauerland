@@ -23,6 +23,7 @@ export interface RouteData {
   places?: { d: number; road: string | null; area: string | null }[];
   surface?: { from: number; to: number; type: 'radweg' }[];
   width?: number[];   // echte Fahrbahnbreite je Streckenpunkt (m)
+  overlap?: number[][];   // doppelt befahrene Abschnitte (Streckenmeter der späteren Durchfahrt): nur einmal zeichnen
 }
 
 /** Echte Weltdaten (Geobasis NRW), falls für die Strecke vorhanden */

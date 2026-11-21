@@ -358,16 +358,33 @@ const offs = baro.map((_, k) => {
   w.sort((a, b) => a - b); return w.length ? w[w.length >> 1] : 0;
 });
 const off = [...offs].sort((a, b) => a - b)[offs.length >> 1];
-// 2) Je Punkt den DGM-Wert quer zur Straße, der der verschobenen Aufzeichnung am nächsten liegt.
-//    Weicht auch der um mehr als 2,5 m ab (Brücke – das DGM ist Gelände ohne Bauwerke), gilt die Aufzeichnung.
+// 2) Je Punkt die DGM-Höhe in der Straßenmitte (die Strecke liegt auf der amtlichen Straßenachse).
+//    Nur wenn weder die Mitte noch ein Wert quer zur Straße zur verschobenen Aufzeichnung passt
+//    (Brücke – das DGM ist Gelände ohne Bauwerke), gilt die Aufzeichnung. Der Höhenmesser liegt
+//    gerade am Anfang einer Aufzeichnung oft daneben und darf am Hang nicht den Straßenrand auswählen.
 let bridges = 0;
+const suspect = new Uint8Array(dgmLat.length);
 const dgmRoad = dgmLat.map((l, k) => {
-  const ref = baro[k] + offs[k]; let best = NaN, bd = Infinity;
+  const ref = baro[k] + offs[k], c = centers[k];
+  if (isNaN(c)) { suspect[k] = 1; return NaN; }
+  if (Math.abs(c - ref) <= 4) return c;
+  let best = NaN, bd = Infinity;
   for (const v of l) if (Math.abs(v - ref) < bd) { bd = Math.abs(v - ref); best = v; }
-  if (isNaN(best) || bd > 2.5) { bridges++; return ref; }
-  return best;
+  if (bd <= 2.5) return best;
+  suspect[k] = 1; return c;
 });
-console.log(`Versatz Aufzeichnung→DGM1: ${Math.min(...offs).toFixed(1)} … ${Math.max(...offs).toFixed(1)} m (Median ${off.toFixed(1)}) · ${bridges} Punkte (${(bridges * route.step)} m) aus der Aufzeichnung (Brücken/Lücken)`);
+// Brücken: kurze verdächtige Stücke (≤ 200 m) geradlinig zwischen den Enden überbrücken; lange Stücke = Drift des Höhenmessers → Gelände
+for (let k = 0; k < dgmRoad.length; k++) {
+  if (!suspect[k]) continue;
+  let e = k; while (e + 1 < dgmRoad.length && suspect[e + 1]) e++;
+  const a = k - 1, b = e + 1;
+  if ((e - k + 1) * route.step <= 200 && a >= 0 && b < dgmRoad.length) {
+    for (let i = k; i <= e; i++) dgmRoad[i] = dgmRoad[a] + (dgmRoad[b] - dgmRoad[a]) * (i - a) / (b - a);
+    bridges += e - k + 1;
+  } else for (let i = k; i <= e; i++) if (isNaN(dgmRoad[i])) dgmRoad[i] = baro[i] + offs[i];
+  k = e;
+}
+console.log(`Versatz Aufzeichnung→DGM1: ${Math.min(...offs).toFixed(1)} … ${Math.max(...offs).toFixed(1)} m (Median ${off.toFixed(1)}) · ${bridges} Punkte (${(bridges * route.step)} m) als Brücke überbrückt`);
 // 3) Median gegen Ausreißer, dann glätten
 const med = dgmRoad.map((_, i) => { const w = []; for (let j = Math.max(0, i - 6); j <= Math.min(dgmRoad.length - 1, i + 6); j++) w.push(dgmRoad[j]); w.sort((a, b) => a - b); return w[w.length >> 1]; });
 route.h = smooth(smooth(med, 6), 6).map(v => Math.round(v * 10) / 10);
