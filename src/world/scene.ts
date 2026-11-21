@@ -34,7 +34,7 @@ export class World {
   private buildings: BuildingField | null = null;
   private lodTimer = 0;
   private houses: THREE.Object3D | null = null;
-  private fpsAcc = 0; private fpsN = 0; private dpr = 1; private maxDpr = 1;
+  private fpsAcc = 0; private fpsN = 0; private fpsWarm = 0; private dpr = 1; private maxDpr = 1;
   private grass: GrassField | null = null;
   private life: Life | null = null;
   private terrain: THREE.Object3D | null = null;
@@ -171,16 +171,17 @@ export class World {
     shaderTime.value += dt;
     this.sun.target.position.copy(a.position);
     this.life?.update(dt, this.camera.position, a.position, this.route.wrap(d), speed, this.lat, this.renderer, this.camera);
+    this.adaptResolution(dt);   // vor dem Zeichnen: eine Größenänderung leert das Bild, sonst blitzt es schwarz
     if (this.composer) this.composer.render(dt); else this.renderer.render(this.scene, this.camera);
-    this.adaptResolution(dt);
   }
 
-  /** Auflösung an die Bildrate anpassen: unter 45 fps kleiner, über 58 fps wieder größer (alle 2 s) */
+  /** Auflösung an die Bildrate anpassen: nur verkleinern (unter 40 fps, alle 3 s, nie unter 1), nicht wieder hochpendeln */
   private adaptResolution(dt: number) {
     this.fpsAcc += dt; this.fpsN++;
-    if (this.fpsAcc < 2) return;
+    if (this.fpsAcc < 3) return;
     const fps = this.fpsN / this.fpsAcc; this.fpsAcc = 0; this.fpsN = 0;
-    const next = fps < 40 ? Math.max(Math.min(1, this.maxDpr), this.dpr - 0.1) : fps > 56 ? Math.min(this.maxDpr, this.dpr + 0.1) : this.dpr;
+    if (this.fpsWarm++ < 2) return;            // Ladephase nicht werten
+    const next = fps < 40 ? Math.max(Math.min(1, this.maxDpr), this.dpr - 0.25) : this.dpr;
     if (Math.abs(next - this.dpr) < 0.01) return;
     this.dpr = next; this.renderer.setPixelRatio(next);
     const size = this.renderer.getSize(new THREE.Vector2()); this.renderer.setSize(size.x, size.y, false);
