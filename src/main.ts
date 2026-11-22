@@ -1,7 +1,6 @@
 import './styles.css';
 import { loadRoute, listRoutes, type Route, type RouteInfo } from './route';
 import { World } from './world/scene';
-import { designColors, type JerseyDesign } from './world/avatar';
 import { ENS } from './world/lookflag';
 import { stepSpeed, defaultRider, type RiderSettings } from './physics';
 import { FtmsTrainer, HeartRateMonitor, bluetoothAvailable } from './devices/ftms';
@@ -22,8 +21,8 @@ const fmtTime = (s: number) => { s = Math.floor(s); const h = Math.floor(s / 360
 const fmtMin = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 // ---------- Einstellungen ----------
-interface Settings { route: string; ftp: number; kg: number; difficulty: number; jersey: string; design: JerseyDesign; mode: 'sim' | 'erg'; workout: string; quality: 'auto' | 'high' | 'low' }
-const defaults: Settings = { route: 'hausrunde', ftp: 250, kg: 80, difficulty: 50, jersey: '#d2412f', design: 'herscheid', mode: 'sim', workout: 'free', quality: 'auto' };
+interface Settings { route: string; ftp: number; kg: number; difficulty: number; mode: 'sim' | 'erg'; workout: string; quality: 'auto' | 'high' | 'low' }
+const defaults: Settings = { route: 'hausrunde', ftp: 250, kg: 80, difficulty: 50, mode: 'sim', workout: 'free', quality: 'auto' };
 function loadSettings(): Settings {
   try { return { ...defaults, ...JSON.parse(localStorage.getItem('sauerland.settings') ?? '{}') }; } catch { return { ...defaults }; }
 }
@@ -79,7 +78,7 @@ async function init() {
   // Schrift für Ortstafeln laden (höchstens 2 s warten)
   try { await Promise.race([document.fonts.load('700 64px "Barlow Condensed"'), new Promise(r => setTimeout(r, 2000))]); } catch { /* Ersatzschrift */ }
   await new Promise(r => setTimeout(r, 30));
-  world = new World($<HTMLCanvasElement>('view'), route, loaded.heights, loaded.world, { ...designColors(settings.design, settings.jersey), bike: '#20242b', design: settings.design }, quality);
+  world = new World($<HTMLCanvasElement>('view'), route, loaded.heights, loaded.world, { bike: '#20242b' }, quality);
   profile = new ProfileChart($<HTMLCanvasElement>('profile'), route, { bg: 'rgba(13,22,19,.78)', labels: true });
   minimap = new MiniMap($<HTMLCanvasElement>('minimap'), route);
   new ProfileChart($<HTMLCanvasElement>('routeThumb'), route, { padTop: 18 }).draw(null);
@@ -296,12 +295,6 @@ const bindNum = (id: string, key: 'ftp' | 'kg' | 'difficulty') => {
 bindNum('inFtp', 'ftp'); bindNum('inKg', 'kg'); bindNum('inDiff', 'difficulty');
 const qSel = $<HTMLSelectElement>('inQuality'); qSel.value = settings.quality;
 qSel.onchange = () => { settings.quality = qSel.value as Settings['quality']; saveSettings(); toast('Grafikstufe gilt ab dem nächsten Laden der Seite'); };
-const jersey = $<HTMLInputElement>('inJersey'); jersey.value = settings.jersey;
-jersey.onchange = () => { settings.jersey = jersey.value; saveSettings(); toast('Trikotfarbe gilt ab dem nächsten Laden'); };
-const design = $<HTMLSelectElement>('inDesign'); design.value = settings.design;
-const syncDesign = () => { $('jerseyColorField').hidden = settings.design !== 'sauerland'; };
-design.onchange = () => { settings.design = design.value as JerseyDesign; saveSettings(); syncDesign(); toast('Trikot gilt ab dem nächsten Laden der Strecke'); };
-syncDesign();
 setMode(settings.mode);
 
 $('btnGo').onclick = async () => {

@@ -40,7 +40,8 @@ Firefox hat kein Web Bluetooth) und testet auch am Handy. Oberfläche und Code-K
   `inMouth`, `inRoundabout` nutzen Ausstattung, Verkehr und Gras.
 - `src/world/houses.ts` – Häuser aus `houses.json` (Rechteck, Dachformen, Schornsteine). `grass.ts`, `sky.ts`, `furniture.ts`
   (Ortstafeln, Leitpfosten, Laternen, Planken, Bordsteine), `landmarks.ts` (Talsperre, Aqua Magis, Türme, Hochspannung).
-- `src/world/avatar.ts` – Fahrer + Rennrad, Bein/Arm-IK, Wiegetritt, Trikot-Textur (Canvas), Helm.
+- `src/world/avatar.ts` – Fahrer + Rennrad, Bein/Arm-IK, Wiegetritt, Helm. **Einziges Trikot** (Nutzerwunsch, keine Auswahl):
+  Stil des Frauenteams Canyon//SRAM 2026 „Luminous“ (Violett mit Lichtbrechung Türkis/Pink/Koralle), bewusst ohne Sponsorenlogos.
 - `src/world/life/` – belebte Welt: `common.ts` (Nutzungskarte, Straßen-/Häuser-Abfragen, `StaticSet` = Instanzen in 1-km-Kacheln),
   `animals.ts` (Kühe/Schafe, Vögel, Schmetterlinge, Pollen), `traffic.ts` (Autos, Überholen, Parken), `village.ts`
   (Gärten, Kirchtürme, Bushaltestellen, Wegweiser, Rauch), `roadside.ts` (Weidezäune, Hochsitze, Holzstapel, SGV-Schilder).
@@ -92,7 +93,7 @@ Firefox hat kein Web Bluetooth) und testet auch am Handy. Oberfläche und Code-K
 - 7 Rundkurse: Hausrunde, Fürwigge-, Lüdenscheid-, Plettenberg-Runde, 2× Valbert-Runde, Große Runde (72 km).
 - Welt: Gelände, Straßen inkl. Nebenstraßen/Radwege, Häuser, Bäume, Gras, Ortstafeln, Talsperre, Aqua Magis, Kirchtürme,
   Tiere, Autos (überholen, warten bei Gegenverkehr), Gärten, Bushaltestellen, Wegweiser, Weidezäune, Hochsitze, Rauch.
-- Avatar überarbeitet (geformter Oberkörper, Trikot „SAUERLAND“, Helm, Schuhe). Performance optimiert (Dreiecke halbiert).
+- Avatar überarbeitet (geformter Oberkörper, Canyon-Trikot, Helm, Schuhe). Performance optimiert (Dreiecke halbiert).
 
 ## 7. Bekannte Bugs / offene Baustellen
 - Performance auf der Claw nach der letzten Optimierung **nicht bestätigt**; schwarze Blitzer am Handy vermutlich behoben (unbestätigt).
@@ -105,6 +106,6 @@ Firefox hat kein Web Bluetooth) und testet auch am Handy. Oberfläche und Code-K
 1. Rückmeldung zur Performance (Claw + Handy) einholen; ggf. `?leben=0` vergleichen und Sichtweiten/Anzahlen nachregeln.
 2. Offene Ideen aus der Abhak-Liste (Artifact „Lebendige Sauerland-Welt“): Klangkulisse, andere Radfahrer (KI/Ghost),
    Tageszeit/Wetter – Nutzer wünscht vorher **Bilder als Vorschlag** (Tokens sparen), erst nach Zustimmung programmieren.
-3. Avatar-Feinschliff nach Nutzerfeedback (Trikotdesign/Schriftzug in Einstellungen wählbar, Haar-/Hautfarbe).
+3. Avatar-Feinschliff vorgeschlagen (Muskeln, Rennradhaltung, Gesicht/Brille, Helm, Haut/Haare) – noch nicht freigegeben.
 4. Zukunftsidee „freies Fahren“: Region als Straßennetz, Route frei wählen (größerer Umbau der Datenpipeline).
 5. Optional: Installer (Electron) für die Claw.
