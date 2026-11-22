@@ -2,7 +2,10 @@
 // Lokales System: Blick nach +Z, +Y oben. Maße in Metern (Fahrer ca. 1,80 m, Rahmen 56).
 import * as THREE from 'three';
 
-export interface AvatarStyle { jersey: string; jersey2: string; bike: string }
+export type JerseyDesign = 'sauerland' | 'herscheid';
+export interface AvatarStyle { jersey: string; jersey2: string; bike: string; design?: JerseyDesign }
+/** Farben je Design: Herscheid fest nach dem Gemeindewappen (Rot, Gold, Silber/Weiß) */
+export const designColors = (d: JerseyDesign | undefined, c1: string) => d === 'herscheid' ? { jersey: '#c8102e', jersey2: '#e3b31c' } : { jersey: c1, jersey2: '#1d2a44' };
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 const UP = V(0, 1, 0);
@@ -62,6 +65,75 @@ function canvasTex(w: number, h: number, draw: (g: CanvasRenderingContext2D) => 
   const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
 }
 const shade = (c: string, f: number) => '#' + new THREE.Color(c).multiplyScalar(f).getHexString();
+/** Wappen der Gemeinde Herscheid: in Gold ein rot-silbern geschachter Balken (drei Reihen, mit Rot beginnend),
+ *  aus dem ein roter Hirsch wächst (redendes Wappen, verliehen 1935). Gezeichnet in einem Feld von w × w*1.15 Pixeln. */
+export function drawHerscheidArms(g: CanvasRenderingContext2D, x: number, y: number, w: number) {
+  const h = w * 1.15, R = '#c8102e', GOLD = '#e3b31c', S = '#f4f4f2', L = '#3a2a10';
+  g.save(); g.translate(x, y); g.scale(w / 100, h / 115);
+  const shield = () => { g.beginPath(); g.moveTo(2, 2); g.lineTo(98, 2); g.lineTo(98, 62); g.bezierCurveTo(98, 92, 72, 106, 50, 113); g.bezierCurveTo(28, 106, 2, 92, 2, 62); g.closePath(); };
+  shield(); g.fillStyle = GOLD; g.fill();
+  g.save(); shield(); g.clip();
+  // geschachter Balken (gesenkt): 3 Reihen × 8 Felder, oben links Rot
+  const fy = 64, fh = 21, cols = 8;
+  for (let r = 0; r < 3; r++) for (let c = 0; c < cols; c++) { g.fillStyle = (r + c) % 2 ? S : R; g.fillRect(c * 100 / cols, fy + r * fh / 3, 100 / cols + 0.3, fh / 3 + 0.3); }
+  // wachsender roter Hirsch, nach heraldisch rechts (vom Betrachter links) gewandt
+  g.fillStyle = R; g.strokeStyle = R; g.lineCap = 'round'; g.lineJoin = 'round';
+  g.save(); g.translate(50, fy); g.scale(0.86, 0.86); g.translate(-50, -fy);   // Geweih bleibt im Schild
+  g.beginPath();
+  g.moveTo(63, fy + 0.5); g.bezierCurveTo(67, 52, 67, 44, 62, 38);            // Rücken
+  g.bezierCurveTo(60, 34, 56, 30, 53, 24);                                    // Nacken
+  g.lineTo(55, 20); g.lineTo(51, 21);                                         // Ohr
+  g.bezierCurveTo(47, 18, 42, 19, 38, 22); g.lineTo(31, 26);                  // Stirn, Nasenrücken
+  g.bezierCurveTo(29, 28, 31, 31, 34, 30); g.bezierCurveTo(38, 30, 42, 31, 45, 33);   // Maul, Kehle
+  g.bezierCurveTo(46, 37, 45, 41, 43, 44);                                    // Hals vorn
+  g.lineTo(33, 40); g.lineTo(28, 44); g.lineTo(31, 46); g.lineTo(35, 44.5); g.lineTo(42, 49);   // erhobener Vorderlauf
+  g.lineTo(38, 54); g.lineTo(34, 58); g.lineTo(37, 60); g.lineTo(41, 57); g.lineTo(46, 52);     // zweiter Vorderlauf
+  g.bezierCurveTo(46, 56, 45, 60, 44, fy + 0.5); g.closePath(); g.fill();
+  // Geweih
+  g.lineWidth = 2.4;
+  const tine = (pts: number[][]) => { g.beginPath(); g.moveTo(pts[0][0], pts[0][1]); for (const p of pts.slice(1)) g.lineTo(p[0], p[1]); g.stroke(); };
+  tine([[47, 20], [49, 13], [53, 6], [58, 2]]); tine([[49, 13], [45, 9]]); tine([[51, 9], [57, 9]]); tine([[53, 6], [52, 1]]);
+  tine([[44, 20], [41, 13], [42, 6], [46, 1]]); tine([[41, 13], [36, 11]]); tine([[42, 8], [37, 4]]);
+  g.fillStyle = L; g.beginPath(); g.arc(39, 23.5, 1.1, 0, Math.PI * 2); g.fill();   // Auge
+  g.restore(); g.restore();
+  shield(); g.strokeStyle = L; g.lineWidth = 2.5; g.stroke();
+  g.restore();
+}
+/** märkisches Schachband (rot-silbern) als Streifen */
+function chequy(g: CanvasRenderingContext2D, x0: number, y0: number, w: number, h: number, rows = 3) {
+  const s = h / rows, cols = Math.ceil(w / s);
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { g.fillStyle = (r + c) % 2 ? '#f4f4f2' : '#c8102e'; g.fillRect(x0 + c * s, y0 + r * s, s + 0.5, s + 0.5); }
+}
+/** Herscheid-Trikot: Weiß mit Schachband über Brust und Rücken, rote Schulterpasse, goldene Akzente, Wappen auf Brust und Rücken */
+function herscheidTexture() {
+  return canvasTex(1024, 512, g => {
+    const W = 1024, H = 512, R = '#c8102e', GOLD = '#e3b31c';
+    g.fillStyle = '#f3f2ee'; g.fillRect(0, 0, W, H);
+    const grd = g.createLinearGradient(0, 0, 0, H); grd.addColorStop(0, 'rgba(255,255,255,0.05)'); grd.addColorStop(1, 'rgba(0,0,0,0.1)'); g.fillStyle = grd; g.fillRect(0, 0, W, H);
+    g.fillStyle = R; g.fillRect(0, 0, W, H * 0.13);                              // Schulterpasse
+    g.fillStyle = GOLD; g.fillRect(0, H * 0.13, W, H * 0.018);
+    chequy(g, 0, H * 0.2, W, H * 0.105);                                        // Schachband rundum
+    g.fillStyle = GOLD; for (const y of [H * 0.19, H * 0.305]) g.fillRect(0, y, W, H * 0.008);
+    // Seitenteile rot, nach oben schmaler
+    g.fillStyle = R;
+    for (const cu of [0.25, 0.75]) { g.beginPath(); g.moveTo((cu - 0.06) * W, H); g.lineTo((cu + 0.06) * W, H); g.lineTo((cu + 0.025) * W, H * 0.32); g.lineTo((cu - 0.025) * W, H * 0.32); g.fill(); }
+    // Rücken: großes Wappen, Schriftzug
+    drawHerscheidArms(g, W * 0.5 - 52, H * 0.36, 104);
+    g.fillStyle = R; g.font = '700 50px "Barlow Condensed","Arial Narrow",Arial,sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('HERSCHEID', W * 0.5, H * 0.66);
+    // Brust: kleines Wappen links neben dem Reißverschluss, Schriftzug rechts
+    drawHerscheidArms(g, W * 0.055, H * 0.36, 44);
+    g.font = '700 30px "Barlow Condensed","Arial Narrow",Arial,sans-serif'; g.fillText('HERSCHEID', W * 0.875, H * 0.45);
+    // Rückentaschen, Reißverschluss, Bund
+    const px0 = W * 0.39, px1 = W * 0.61, py = H * 0.8;
+    g.fillStyle = '#e4e2dc'; g.fillRect(px0, py, px1 - px0, H - py);
+    g.strokeStyle = '#c9c6be'; g.lineWidth = 3; for (const k of [1, 2]) { const x = px0 + (px1 - px0) * k / 3; g.beginPath(); g.moveTo(x, py); g.lineTo(x, H); g.stroke(); }
+    g.fillStyle = R; g.fillRect(px0, py - 4, px1 - px0, 6);
+    g.fillStyle = '#1b1c1e'; g.fillRect(0, 0, 5, H * 0.8); g.fillRect(W - 5, 0, 5, H * 0.8);
+    g.fillStyle = R; g.fillRect(0, H - 12, W, 12);
+    g.globalAlpha = 0.04; g.fillStyle = '#000'; for (let y = 0; y < H; y += 3) g.fillRect(0, y, W, 1); g.globalAlpha = 1;
+  });
+}
 /** Trikot: u = 0 Bauchmitte, 0,5 Rückenmitte; oben im Bild = Schultern */
 function jerseyTexture(c1: string, c2: string) {
   return canvasTex(1024, 512, g => {
@@ -237,7 +309,7 @@ export class Avatar {
 
   private buildRider(M: Record<string, THREE.MeshStandardMaterial>, style: AvatarStyle) {
     const r = this.rider, skinC = '#' + M.skin.color.getHexString();
-    const jerseyMat = new THREE.MeshStandardMaterial({ map: jerseyTexture(style.jersey, style.jersey2), roughness: 0.72 });
+    const jerseyMat = new THREE.MeshStandardMaterial({ map: style.design === 'herscheid' ? herscheidTexture() : jerseyTexture(style.jersey, style.jersey2), roughness: 0.72 });
     const sleeveMat = new THREE.MeshStandardMaterial({ map: sleeveTexture(style.jersey, style.jersey2, skinC, 0.62), roughness: 0.68 });
     const legMat = new THREE.MeshStandardMaterial({ map: sleeveTexture('#16171a', '#2a2c30', skinC, 0.8, 0.07), roughness: 0.55 });
     // Becken (Hose) und geformter Rumpf: Hüfte, Taille, Brustkorb, breite Schultern, leicht runder Rücken
