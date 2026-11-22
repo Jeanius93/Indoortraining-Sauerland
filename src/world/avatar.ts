@@ -2,10 +2,13 @@
 // Lokales System: Blick nach +Z, +Y oben. Maße in Metern (Fahrer ca. 1,80 m, Rahmen 56).
 import * as THREE from 'three';
 
-export type JerseyDesign = 'sauerland' | 'herscheid';
-export interface AvatarStyle { jersey: string; jersey2: string; bike: string; design?: JerseyDesign }
+export type JerseyDesign = 'sauerland' | 'herscheid' | 'luminous';
+export interface AvatarStyle { jersey: string; jersey2: string; bike: string; design?: JerseyDesign; shorts?: string }
 /** Farben je Design: Herscheid fest nach dem Gemeindewappen (Rot, Gold, Silber/Weiß) */
-export const designColors = (d: JerseyDesign | undefined, c1: string) => d === 'herscheid' ? { jersey: '#c8102e', jersey2: '#e3b31c' } : { jersey: c1, jersey2: '#1d2a44' };
+export const designColors = (d: JerseyDesign | undefined, c1: string): { jersey: string; jersey2: string; shorts?: string } =>
+  d === 'herscheid' ? { jersey: '#c8102e', jersey2: '#e3b31c' }
+  : d === 'luminous' ? { jersey: '#33173f', jersey2: '#2ed3c6', shorts: '#24102e' }      // im Stil des Frauenteams 2026 („Luminous“), ohne Sponsorenlogos
+  : { jersey: c1, jersey2: '#1d2a44' };
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 const UP = V(0, 1, 0);
@@ -134,6 +137,48 @@ function herscheidTexture() {
     g.globalAlpha = 0.04; g.fillStyle = '#000'; for (let y = 0; y < H; y += 3) g.fillRect(0, y, W, 1); g.globalAlpha = 1;
   });
 }
+/** Trikot im Stil „Luminous“: dunkles Violett mit Lichtbrechung in Türkis, Pink, Koralle und Rot (ohne Logos) */
+function luminousTexture() {
+  return canvasTex(1024, 512, g => {
+    const W = 1024, H = 512;
+    const base = g.createLinearGradient(0, 0, 0, H); base.addColorStop(0, '#3a1a4e'); base.addColorStop(1, '#1d0c29');
+    g.fillStyle = base; g.fillRect(0, 0, W, H);
+    // Lichtbrechung: schräge, sich überlagernde Scherben mit Farbverlauf (vorn und hinten gespiegelt)
+    const shards: [number, number, number, number, number][] = [   // Mitte u, Breite, Neigung, Deckkraft, Phase
+      [0.02, 0.10, 0.9, 0.85, 0], [0.11, 0.05, 1.1, 0.6, 0.3], [0.88, 0.07, -0.8, 0.7, 0.6], [0.95, 0.04, -1.2, 0.5, 0.15],
+      [0.46, 0.12, 0.8, 0.85, 0.45], [0.56, 0.06, 1.0, 0.65, 0.8], [0.38, 0.05, -0.9, 0.55, 0.2], [0.63, 0.04, -1.1, 0.5, 0.7],
+    ];
+    g.globalCompositeOperation = 'screen';
+    for (const [u, w, tilt, a, ph] of shards) {
+      const x = u * W, bw = w * W, gr = g.createLinearGradient(x - bw, 0, x + bw, H);
+      const cols = ['#2ed3c6', '#ff5fa2', '#ff7a59', '#e8323c', '#2ed3c6'];
+      cols.forEach((c, i) => gr.addColorStop(Math.min(1, (i / 4 + ph) % 1.0001), c));
+      g.globalAlpha = a; g.fillStyle = gr;
+      g.beginPath(); g.moveTo(x - bw / 2 - tilt * 120, 0); g.lineTo(x + bw / 2 - tilt * 120, 0); g.lineTo(x + bw / 2 + tilt * 120, H); g.lineTo(x - bw / 2 + tilt * 120, H); g.closePath(); g.fill();
+      // feine helle Kante
+      g.globalAlpha = a * 0.7; g.strokeStyle = '#ffd6e6'; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(x + bw / 2 - tilt * 120, 0); g.lineTo(x + bw / 2 + tilt * 120, H); g.stroke();
+    }
+    // weiche Lichtflecken
+    for (const [u, v, r, c] of [[0.05, 0.35, 90, '#ff5fa2'], [0.5, 0.3, 120, '#2ed3c6'], [0.52, 0.7, 80, '#ff7a59'], [0.93, 0.6, 70, '#2ed3c6']] as [number, number, number, string][]) {
+      const rg = g.createRadialGradient(u * W, v * H, 0, u * W, v * H, r); rg.addColorStop(0, c); rg.addColorStop(1, 'rgba(0,0,0,0)');
+      g.globalAlpha = 0.45; g.fillStyle = rg; g.fillRect(u * W - r, v * H - r, r * 2, r * 2);
+    }
+    g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1;
+    // dunkle Seitenteile, Schulterpasse, Kragenrand
+    g.fillStyle = '#1d0c29';
+    for (const cu of [0.25, 0.75]) { g.beginPath(); g.moveTo((cu - 0.07) * W, H); g.lineTo((cu + 0.07) * W, H); g.lineTo((cu + 0.03) * W, H * 0.1); g.lineTo((cu - 0.03) * W, H * 0.1); g.fill(); }
+    g.fillStyle = '#2a1238'; g.fillRect(0, 0, W, H * 0.06); g.fillStyle = '#ff7a59'; g.fillRect(0, H * 0.06, W, 3);
+    // Rückentaschen, Reißverschluss, Bund
+    const px0 = W * 0.39, px1 = W * 0.61, py = H * 0.8;
+    g.fillStyle = 'rgba(20,8,28,0.55)'; g.fillRect(px0, py, px1 - px0, H - py);
+    g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = 3; for (const k of [1, 2]) { const x = px0 + (px1 - px0) * k / 3; g.beginPath(); g.moveTo(x, py); g.lineTo(x, H); g.stroke(); }
+    g.fillStyle = '#2ed3c6'; g.fillRect(px0, py - 4, px1 - px0, 5);
+    g.fillStyle = '#120818'; g.fillRect(0, 0, 5, H * 0.8); g.fillRect(W - 5, 0, 5, H * 0.8);
+    g.fillStyle = '#1d0c29'; g.fillRect(0, H - 12, W, 12);
+    g.globalAlpha = 0.05; g.fillStyle = '#000'; for (let y = 0; y < H; y += 3) g.fillRect(0, y, W, 1); g.globalAlpha = 1;
+  });
+}
 /** Trikot: u = 0 Bauchmitte, 0,5 Rückenmitte; oben im Bild = Schultern */
 function jerseyTexture(c1: string, c2: string) {
   return canvasTex(1024, 512, g => {
@@ -221,7 +266,7 @@ export class Avatar {
     const M = {
       frame: std(style.bike, 0.28, 0.35), carbon: std('#15171a', 0.35, 0.2), black: std('#111214', 0.7), tire: std('#1b1b1c', 0.85),
       alu: std('#9aa0a6', 0.35, 0.8), chain: std('#4a4d52', 0.4, 0.8), tape: std('#18191b', 0.9),
-      jersey: std(style.jersey, 0.75), jersey2: std(style.jersey2, 0.75), shorts: std('#16171a', 0.5), skin: std('#c98f6b', 0.55),
+      jersey: std(style.jersey, 0.75), jersey2: std(style.jersey2, 0.75), shorts: std(style.shorts ?? '#16171a', 0.5), skin: std('#c98f6b', 0.55),
       hair: std('#3b2a1f', 0.9), strap: std('#222326', 0.7),
       sock: std('#f2f2f0', 0.8), shoe: std('#f4f4f2', 0.4), sole: std('#202124', 0.6), helmet: std('#f5f5f5', 0.35),
       lens: std('#1a2430', 0.08, 0.9), bottle: std('#e8eef2', 0.3),
@@ -309,9 +354,9 @@ export class Avatar {
 
   private buildRider(M: Record<string, THREE.MeshStandardMaterial>, style: AvatarStyle) {
     const r = this.rider, skinC = '#' + M.skin.color.getHexString();
-    const jerseyMat = new THREE.MeshStandardMaterial({ map: style.design === 'herscheid' ? herscheidTexture() : jerseyTexture(style.jersey, style.jersey2), roughness: 0.72 });
+    const jerseyMat = new THREE.MeshStandardMaterial({ map: style.design === 'herscheid' ? herscheidTexture() : style.design === 'luminous' ? luminousTexture() : jerseyTexture(style.jersey, style.jersey2), roughness: 0.72 });
     const sleeveMat = new THREE.MeshStandardMaterial({ map: sleeveTexture(style.jersey, style.jersey2, skinC, 0.62), roughness: 0.68 });
-    const legMat = new THREE.MeshStandardMaterial({ map: sleeveTexture('#16171a', '#2a2c30', skinC, 0.8, 0.07), roughness: 0.55 });
+    const legMat = new THREE.MeshStandardMaterial({ map: sleeveTexture(style.shorts ?? '#16171a', style.design === 'luminous' ? '#ff7a59' : '#2a2c30', skinC, 0.8, 0.07), roughness: 0.55 });
     // Becken (Hose) und geformter Rumpf: Hüfte, Taille, Brustkorb, breite Schultern, leicht runder Rücken
     this.pelvis = new THREE.Mesh(new THREE.SphereGeometry(0.12, 18, 12), M.shorts); this.pelvis.scale.set(1.25, 0.75, 0.95); r.add(this.pelvis);
     this.torso = new Loft(loft([
