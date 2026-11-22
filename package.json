@@ -1,0 +1,38 @@
+{
+  "name": "indoortraining-sauerland",
+  "version": "1.0.0",
+  "description": "Indoortraining im Browser auf den eigenen Hausstrecken",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "build:artifact": "tsc --noEmit && vite build --mode artifact && node scripts/make-artifact.mjs",
+    "preview": "vite preview --host",
+    "route": "node scripts/prepare-route.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "deploy": "node scripts/bump-version.mjs && node scripts/make-index.mjs && npm run build && node scripts/make-docs.mjs docs --ohne-luftbild"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jeanius93/Indoortraining-Sauerland.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Jeanius93/Indoortraining-Sauerland/issues"
+  },
+  "homepage": "https://github.com/Jeanius93/Indoortraining-Sauerland#readme",
+  "dependencies": {
+    "@garmin/fitsdk": "^21.222.0",
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "@types/web-bluetooth": "^0.0.22",
+    "earcut": "^3.2.4",
+    "geotiff": "^3.0.5",
+    "pngjs": "^7.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vite-plugin-singlefile": "^2.3.4"
+  },
+  "private": true,
+  "type": "module"
+}

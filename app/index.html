@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="de" data-v="2026-11-22-0734">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="theme-color" content="#0f1714">
+<title>Sauerland Indoor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
+<link rel="manifest" href="manifest.webmanifest">
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<!-- Fahr-Anzeige -->
+<div id="hud" hidden>
+  <div class="tiles">
+    <div class="tile power"><span class="lbl">Leistung</span><b id="vPower">0</b><span class="unit">W</span><span class="zone" id="vZone">Z1</span></div>
+    <div class="tile"><span class="lbl">Tempo</span><b id="vSpeed">0,0</b><span class="unit">km/h</span></div>
+    <div class="tile"><span class="lbl">Trittfreq.</span><b id="vCad">0</b><span class="unit">U/min</span></div>
+    <div class="tile"><span class="lbl">Puls</span><b id="vHr">–</b><span class="unit">bpm</span></div>
+    <div class="tile grade"><span class="lbl">Steigung</span><b id="vGrade">0,0</b><span class="unit">%</span></div>
+  </div>
+  <div class="meta">
+    <span><i>Zeit</i><b id="vTime">0:00:00</b></span>
+    <span><i>Strecke</i><b id="vDist">0,00 km</b></span>
+    <span><i>Rest</i><b id="vLeft">–</b></span>
+  </div>
+  <div id="workoutBar" hidden>
+    <div class="wo-head"><b id="woLabel">–</b><span id="woRemain">0:00</span></div>
+    <canvas id="woCanvas" height="40"></canvas>
+  </div>
+  <canvas id="minimap" width="200" height="200" aria-label="Übersichtskarte"></canvas>
+
+  <div class="dock">
+    <div class="ctl" id="ctlMain">
+      <span class="ctl-lbl" id="ctlLabel">Simulator-Leistung</span>
+      <div class="stepper">
+        <button id="btnMinus" aria-label="weniger">−</button>
+        <output id="ctlValue">180 W</output>
+        <button id="btnPlus" aria-label="mehr">+</button>
+      </div>
+      <input type="range" id="ctlRange" min="0" max="500" step="5" value="180" aria-label="Wert einstellen">
+    </div>
+    <div class="actions">
+      <button id="btnMode" class="chip">Frei</button>
+      <button id="btnCam" class="chip">Verfolger</button>
+      <button id="btnPlaces" class="chip">Orte</button>
+      <button id="btnPause" class="chip">Pause</button>
+      <button id="btnEnd" class="chip danger">Beenden</button>
+    </div>
+  </div>
+  <canvas id="profile" aria-label="Höhenprofil"></canvas>
+  <div class="attrib" id="attrib"></div>
+</div>
+
+<!-- Startbildschirm -->
+<section id="start" class="sheet app">
+  <header class="topbar">
+    <div class="logo">SAUERLAND <b>INDOOR</b></div>
+    <nav class="tabs" role="tablist">
+      <button class="tab on" data-page="ride" role="tab">Fahren</button>
+      <button class="tab" data-page="routes" role="tab">Strecken</button>
+      <button class="tab" data-page="workouts" role="tab">Workouts</button>
+      <button class="tab" data-page="history" role="tab">Fahrten</button>
+      <button class="tab" data-page="profile" role="tab">Profil</button>
+    </nav>
+    <div class="status"><span class="pill" id="pillTrainer">Trainer –</span><span class="pill" id="pillHr">Puls –</span><span class="pill dim" id="pillFtp">FTP</span></div>
+  </header>
+
+  <!-- ===== Fahren ===== -->
+  <div class="page" data-page="ride">
+    <div class="resume" id="resumeBox" hidden>
+      <div><b>Unterbrochene Fahrt gefunden</b><span id="resumeInfo"></span></div>
+      <div class="resume-actions">
+        <button id="btnResume" class="chip on">Weiterfahren</button>
+        <button id="btnResumeEnd" class="chip">Beenden &amp; speichern</button>
+        <button id="btnResumeDrop" class="chip danger">Verwerfen</button>
+      </div>
+    </div>
+    <div class="ride-grid">
+      <article class="card route-card">
+        <div class="route-hero">
+          <canvas id="routeShape" aria-label="Streckenverlauf"></canvas>
+          <div class="hero-text"><span class="h">Strecke</span><h2 id="routeName">Strecke wird geladen …</h2></div>
+        </div>
+        <div class="route-info">
+          <dl class="stats">
+            <div><dd id="routeLen">–</dd><dt>km</dt></div>
+            <div><dd id="routeUp">–</dd><dt>Höhenmeter</dt></div>
+            <div><dd id="routeMax">–</dd><dt>max. Steigung</dt></div>
+          </dl>
+          <canvas id="routeThumb" width="640" height="150" aria-label="Höhenprofil der Strecke"></canvas>
+          <div class="route-actions"><button id="btnStartAt" class="start-at"><span>Startpunkt</span><b id="startAtLabel">km 0 · Anfang</b><i>ändern</i></button><button class="btn" data-goto="routes">Strecke wechseln ›</button></div>
+          <p class="small" id="routeAttrib"></p>
+        </div>
+      </article>
+
+      <div class="ride-side">
+        <article class="card">
+          <span class="h">Training</span>
+          <div class="chips mode-chips" role="radiogroup">
+            <button class="chip seg-btn" data-mode="sim" role="radio">Freie Fahrt</button>
+            <button class="chip seg-btn" data-mode="erg" role="radio">Workout (ERG)</button>
+          </div>
+          <div id="trainSim"><p class="muted">Der Widerstand folgt der Steigung der Strecke. Die Stärke stellst du im Profil unter „Schwierigkeit“ ein.</p></div>
+          <div id="trainErg" hidden>
+            <div><span class="tag" id="woTag">ERG</span><span class="muted" id="woWatt"></span></div>
+            <h3 class="wo-name" id="woName">–</h3>
+            <canvas class="wo-mini big" id="woPreview"></canvas>
+            <dl class="stats small-stats"><div><dd id="woDur">–</dd><dt>Dauer</dt></div><div><dd id="woTss">–</dd><dt>TSS</dt></div></dl>
+            <button class="btn wide" data-goto="workouts">Workout wechseln ›</button>
+          </div>
+        </article>
+        <button id="btnGo" class="go" disabled>Losfahren</button>
+        <div class="devices">
+          <button id="btnTrainer" class="dev"><span class="dev-name">Elite Suito</span><span class="dev-state" id="stTrainer">verbinden</span></button>
+          <button id="btnHr" class="dev"><span class="dev-name">Pulsgurt</span><span class="dev-state" id="stHr">verbinden</span></button>
+          <button id="btnSim" class="dev"><span class="dev-name">Simulator</span><span class="dev-state" id="stSim">ohne Rad testen</span></button>
+        </div>
+        <p class="hint" id="btHint" hidden></p>
+        <p class="small">Am Trainer in Edge oder Chrome öffnen – Firefox und Safari können kein Bluetooth.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Strecken ===== -->
+  <div class="page" data-page="routes" hidden>
+    <div class="page-head">
+      <div class="chips" id="routeFilter">
+        <button class="chip on" data-f="all">Alle</button><button class="chip" data-f="s">bis 25 km</button>
+        <button class="chip" data-f="m">25–40 km</button><button class="chip" data-f="l">über 40 km</button>
+      </div>
+      <label class="sort">Sortieren <select id="routeSort"><option value="len">Länge</option><option value="up">Höhenmeter</option><option value="name">Name</option></select></label>
+    </div>
+    <div class="route-grid" id="routeGrid"></div>
+  </div>
+
+  <!-- ===== Workouts ===== -->
+  <div class="page" data-page="workouts" hidden>
+    <div class="wo-layout">
+      <div>
+        <div class="page-head">
+          <div class="chips" id="woFilter"></div>
+          <button class="btn accent" id="btnWoNew">+ Neues Workout</button>
+        </div>
+        <div class="wo-grid" id="woGrid"></div>
+      </div>
+      <article class="card editor" id="woEditor">
+        <span class="h" id="edHead">Workout</span>
+        <input class="ed-name" id="edName" aria-label="Name des Workouts">
+        <div class="muted" id="edInfo"></div>
+        <canvas class="wo-mini big" id="edPreview"></canvas>
+        <div id="edRows"></div>
+        <div class="ed-add" id="edAdd">
+          <button class="btn" data-add="step">+ Block</button><button class="btn" data-add="set">+ Intervalle</button><button class="btn" data-add="ramp">+ Rampe</button>
+        </div>
+        <div class="ed-actions">
+          <button class="btn accent" id="edUse">Dieses Workout fahren</button>
+          <button class="btn" id="edSave">Speichern</button>
+          <button class="btn" id="edCopy">Kopie bearbeiten</button>
+          <button class="btn danger" id="edDel">Löschen</button>
+        </div>
+        <p class="small" id="edHint"></p>
+      </article>
+    </div>
+  </div>
+
+  <!-- ===== Fahrten ===== -->
+  <div class="page" data-page="history" hidden>
+    <p class="muted">Alle Fahrten bleiben in diesem Browser gespeichert (die letzten 20). Die FIT-Datei lässt sich jederzeit erneut speichern.</p>
+    <div class="history" id="historyList"></div>
+  </div>
+
+  <!-- ===== Profil ===== -->
+  <div class="page" data-page="profile" hidden>
+    <div class="profile-grid">
+      <article class="card fields">
+        <span class="h">Fahrer</span>
+        <label class="field">FTP <span><input id="inFtp" type="number" min="80" max="500" value="250"> W</span></label>
+        <label class="field">Gewicht <span><input id="inKg" type="number" min="35" max="150" value="80"> kg</span></label>
+        <label class="field">Schwierigkeit (Freie Fahrt) <span><input id="inDiff" type="number" min="0" max="100" step="5" value="50"> %</span></label>
+      </article>
+      <article class="card fields">
+        <span class="h">Darstellung</span>
+        <label class="field">Grafik <span><select id="inQuality"><option value="auto">Automatisch</option><option value="high">Hoch (PC/Claw)</option><option value="low">Niedrig (Handy)</option></select></span></label>
+        <p class="small">Änderungen an der Grafik gelten nach dem nächsten Laden der Strecke.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- Zusammenfassung -->
+<section id="done" class="sheet" hidden>
+  <div class="sheet-inner">
+    <header class="brand"><span class="eyebrow">Fahrt beendet</span><h1 id="doneTitle">Gut gefahren!</h1></header>
+    <dl class="summary" id="summary"></dl>
+    <div class="upload" id="uploadBox"><span id="uploadStatus">–</span></div>
+    <button id="btnFit" class="go ghost">FIT-Datei nochmal speichern</button>
+    <p class="small" id="fitHint">Die FIT-Datei lässt sich bei Strava, Garmin Connect & Co. hochladen und erscheint dort als „Virtuelle Radfahrt“.</p>
+    <button id="btnAgain" class="go ghost">Neue Fahrt</button>
+  </div>
+</section>
+
+<!-- Ortsauswahl -->
+<section id="places" class="sheet" hidden aria-label="Ort wählen">
+  <div class="sheet-inner">
+    <header class="places-head">
+      <div class="brand"><span class="eyebrow">Springen</span><h2>Ort wählen</h2></div>
+      <button id="btnPlacesClose" class="chip">Schließen</button>
+    </header>
+    <p class="small">Tippe auf die Karte oder das Höhenprofil, oder wähle einen Abschnitt aus der Liste.</p>
+    <canvas id="placesMap" aria-label="Karte der Strecke"></canvas>
+    <canvas id="placesProfile" aria-label="Höhenprofil"></canvas>
+    <ol id="placesList" class="places-list"></ol>
+  </div>
+</section>
+
+<div id="loading"><span>Sauerland wird aufgebaut …</span><small id="loadStep"></small><pre id="loadError" hidden></pre></div>
+<script>
+  // Fehler beim Laden sichtbar machen (auch wenn das Hauptprogramm gar nicht startet)
+  (function () {
+    var t0 = Date.now();
+    function show(msg) { var e = document.getElementById('loadError'); if (!e) return; e.hidden = false; e.textContent += msg + '\n'; }
+    window.addEventListener('error', function (e) { show('Fehler: ' + (e.message || e.target && (e.target.src || e.target.href) || 'unbekannt')); }, true);
+    window.addEventListener('unhandledrejection', function (e) { show('Fehler: ' + (e.reason && e.reason.message || e.reason)); });
+    setInterval(function () { var s = document.getElementById('loadStep'); if (s) s.textContent = Math.round((Date.now() - t0) / 1000) + ' s · Version ' + document.documentElement.dataset.v; }, 1000);
+    setTimeout(function () { if (!window.__sauerland) show('Das Programm ist nach 20 s nicht gestartet. Browser: ' + navigator.userAgent); }, 20000);
+  })();
+</script>
+<div id="toast" role="status" hidden></div>
+<div id="lostBanner" role="alert" hidden>Verbindung zum Trainer verloren – verbinde neu … Die Fahrt ist gesichert und pausiert.</div>
+<script type="module" src="../src/main.ts"></script>
+</body>
+</html>
